@@ -1,0 +1,225 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Global Safety Net - Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // 1. Primitive Definitions (Helpers)
+    // ===============================================================
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+        (request.auth.token.email == "nemesis.developers.org@gmail.com" && request.auth.token.email_verified == true) ||
+        (request.auth.token.email == "xavierscot3454@gmail.com" && request.auth.token.email_verified == true) ||
+        (request.auth.token.email == "makeitawesom3@gmail.com" && request.auth.token.email_verified == true) ||
+        (request.auth.token.email == "dcpromoidse@gmail.com" && request.auth.token.email_verified == true) || 
+        (request.auth.token.email == "helixsmith.xavy@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+    
+    function isModerator() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'moderator'
+      );
+    }
+
+    // ===============================================================
+    // 2. Validation Blueprints (Pillar 2)
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'name', 'email', 'photoUrl', 'role', 'status', 'createdAt', 'updatedAt']) &&
+             data.keys().size() <= 15 && // Adjust based on optional fields
+             data.uid == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.email is string && data.email.size() <= 200 &&
+             data.photoUrl is string && data.photoUrl.size() <= 1000 &&
+             data.role in ['student', 'admin', 'moderator'] &&
+             data.status in ['online', 'offline'] &&
+             data.createdAt == (resource == null ? request.time : resource.data.createdAt) &&
+             data.updatedAt == request.time;
+    }
+
+    function isValidMessage(data) {
+      return data.keys().hasAll(['content', 'senderId', 'senderName', 'senderPhoto', 'senderRole', 'channelId', 'type', 'deliveryState', 'createdAt', 'updatedAt']) &&
+             data.senderId == request.auth.uid &&
+             data.content is string && data.content.size() <= 10000 &&
+             data.type in ['text', 'image', 'file', 'system'] &&
+             data.createdAt == (resource == null ? request.time : resource.data.createdAt) &&
+             data.updatedAt == request.time;
+    }
+
+    function isValidEnrollment(data) {
+      return data.keys().hasAll(['name', 'email', 'phone', 'grade', 'subjects', 'status', 'createdAt', 'updatedAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.email is string && data.email.size() <= 200 &&
+             data.phone is string && data.phone.size() <= 25 &&
+             data.grade is string && data.grade.size() <= 50 &&
+             data.subjects is list && data.subjects.size() <= 20 &&
+             data.status in ['pending', 'active', 'suspended'] &&
+             data.createdAt == (resource == null ? request.time : resource.data.createdAt) &&
+             data.updatedAt == request.time;
+    }
+
+    function isValidBranding(data) {
+      return data.keys().hasAll(['title', 'logo', 'updatedAt']) &&
+             data.title is string && data.title.size() <= 100 &&
+             data.logo is string && data.logo.size() <= 1000 &&
+             data.updatedAt == request.time;
+    }
+
+    // ===============================================================
+    // 3. Match Blocks (Actions)
+    // ===============================================================
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(incoming()) && (
+        isAdmin() || incoming().role == existing().role // Students cannot promote themselves
+      );
+    }
+
+    match /enrollments/{enrollmentId} {
+      allow get: if isAdmin() || (isSignedIn() && existing().email == request.auth.token.email);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.email == request.auth.token.email);
+      allow create: if isSignedIn() && isValidEnrollment(incoming()) && incoming().status == 'pending';
+      allow update: if (isAdmin() || (isSignedIn() && existing().email == request.auth.token.email)) && 
+                    isValidEnrollment(incoming()) && (
+                      isAdmin() || incoming().status == existing().status // Students can't activate themselves
+                    );
+      allow delete: if isAdmin();
+    }
+
+    match /channels/{channelId} {
+      // Permission helper for subcollections
+      function canAccessChannel() {
+        return isAdmin() || isModerator() || exists(/databases/$(database)/documents/channels_config/$(channelId));
+        // Simplified for this draft, real one should check channel permissions map
+      }
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn() && canAccessChannel();
+        allow create: if isSignedIn() && canAccessChannel() && isValidMessage(incoming());
+        allow update: if isSignedIn() && (existing().senderId == request.auth.uid || isAdmin() || isModerator()) && isValidMessage(incoming());
+        allow delete: if isSignedIn() && (existing().senderId == request.auth.uid || isAdmin() || isModerator());
+      }
+
+      match /typing/{userId} {
+        allow read: if isSignedIn() && canAccessChannel();
+        allow write: if isOwner(userId) && isValidId(userId);
+      }
+    }
+
+    match /channels_config/{configId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /admin/branding {
+      allow read: if true;
+      allow write: if isAdmin() && isValidBranding(incoming());
+    }
+
+    match /admin/landing {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /batches/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    match /routines/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    match /fees/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    match /downloads/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    
+    match /radars/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /achievers/{id} {
+        allow read: if true;
+        allow write: if isAdmin();
+    }
+
+    match /faculty/{id} {
+        allow read: if true;
+        allow write: if isAdmin();
+    }
+
+    match /teasers/{id} {
+        allow read: if true;
+        allow write: if isAdmin();
+    }
+
+    match /drops/{id} {
+        allow read: if true;
+        allow write: if isAdmin();
+    }
+
+    match /stars/{id} {
+        allow read: if true;
+        allow write: if isAdmin();
+    }
+
+    match /resources/{id} {
+        allow read: if true;
+        allow write: if isAdmin();
+    }
+
+    match /announcements/{id} {
+        allow read: if true;
+        allow write: if isAdmin();
+    }
+
+    match /admin/storage/projects/{projectId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    match /_health/{document} {
+      allow read: if true;
+    }
+  }
+}

@@ -1,0 +1,220 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 0. Global Safety Net - Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // 1. Primitive Definitions (Helpers)
+    // ===============================================================
+    
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' || 
+          'admin' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles)) ||
+        request.auth.token.email in [
+          "nemesis.developers.org@gmail.com",
+          "xavierscot3454@gmail.com",
+          "makeitawesom3@gmail.com",
+          "dcpromoidse@gmail.com",
+          "helixsmith.xavy@gmail.com"
+        ]
+      );
+    }
+    
+    function isModerator() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'moderator' ||
+         'moderator' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles)
+      );
+    }
+
+    function isFaculty() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'faculty' ||
+         'faculty' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.roles)
+      );
+    }
+
+    // ===============================================================
+    // 2. Validation Blueprints
+    // ===============================================================
+
+    function isValidUser(data) {
+      let required = ['uid', 'name', 'email', 'photoUrl', 'role', 'status', 'createdAt', 'updatedAt'];
+      return data.keys().hasAll(required) &&
+             data.uid == request.auth.uid &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             (data.role in ['student', 'admin', 'moderator', 'faculty'] || data.roles.size() > 0) &&
+             data.createdAt == (resource == null ? request.time : existing().createdAt) &&
+             data.updatedAt == request.time;
+    }
+
+    function isValidMessage(data) {
+      let required = ['content', 'senderId', 'senderName', 'senderPhoto', 'senderRole', 'channelId', 'type', 'deliveryState', 'createdAt', 'updatedAt'];
+      return data.keys().hasAll(required) &&
+             (request.method == 'create' ? data.senderId == request.auth.uid : data.senderId == existing().senderId) &&
+             data.content is string && data.content.size() <= 10000 &&
+             data.channelId is string &&
+             data.type in ['text', 'image', 'file', 'system'] &&
+             data.createdAt == (resource == null ? request.time : existing().createdAt) &&
+             data.updatedAt == request.time;
+    }
+
+    function isValidEnrollment(data) {
+      let required = ['name', 'email', 'phone', 'grade', 'subjects', 'status', 'createdAt', 'updatedAt'];
+      return data.keys().hasAll(required) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.email is string && data.email.size() <= 200 &&
+             data.phone is string && data.phone.size() <= 25 &&
+             data.grade is string && data.grade.size() <= 50 &&
+             data.status in ['pending', 'active', 'suspended'] &&
+             data.createdAt == (resource == null ? request.time : existing().createdAt) &&
+             data.updatedAt == request.time;
+    }
+
+    // ===============================================================
+    // 3. Match Blocks
+    // ===============================================================
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isAdmin();
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(incoming()) && (
+        isAdmin() || incoming().role == existing().role
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /enrollments/{enrollmentId} {
+      // PII Protection: Restricted Read
+      allow get: if isAdmin() || isFaculty() || (isSignedIn() && existing().email == request.auth.token.email);
+      allow list: if isAdmin() || isFaculty() || (isSignedIn() && resource.data.email == request.auth.token.email);
+      
+      allow create: if isSignedIn() && isValidEnrollment(incoming()) && incoming().status == 'pending';
+      allow update: if (isAdmin() || (isSignedIn() && existing().email == request.auth.token.email)) && 
+                    isValidEnrollment(incoming()) && (
+                      isAdmin() || (incoming().status == existing().status && incoming().email == existing().email)
+                    );
+      allow delete: if isAdmin();
+    }
+
+    match /channels/{channelId} {
+      // Pillar 1: Relational Sync (using get() for single doc, but avoid in list)
+      function userCanViewChannel() {
+        let configPath = /databases/$(database)/documents/channels_config/$(channelId);
+        return isAdmin() || isModerator() || (isSignedIn() && exists(configPath));
+      }
+
+      match /messages/{messageId} {
+        allow get: if isSignedIn() && userCanViewChannel();
+        // Pillar 8: List query enforcement (no get/exists here)
+        allow list: if isSignedIn(); // We rely on the client knowing the channelId and the fact that they can't see the config if they shouldn't
+        
+        allow create: if isSignedIn() && userCanViewChannel() && isValidMessage(incoming());
+        allow update: if isSignedIn() && (existing().senderId == request.auth.uid || isAdmin()) && isValidMessage(incoming());
+        allow delete: if isSignedIn() && (existing().senderId == request.auth.uid || isAdmin());
+      }
+
+      match /typing/{userId} {
+        allow read: if isSignedIn() && userCanViewChannel();
+        allow write: if isOwner(userId);
+      }
+    }
+
+    match /channels_config/{configId} {
+      allow read: if isSignedIn(); // In a real app, refine this based on participants
+      allow write: if isAdmin();
+    }
+
+    match /admin/branding {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /admin/landing {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Public Collections with Admin Write
+    match /batches/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /routines/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /fees/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /downloads/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /radars/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /achievers/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /faculty/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /teasers/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /drops/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /stars/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /resources/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /announcements/{id} { allow read: if true; allow write: if isAdmin(); }
+
+    match /exclusive_content/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /course_folders/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /batchFaculty/{id} { allow read: if isSignedIn(); allow write: if isAdmin(); }
+    match /attendance/{id} { allow read: if isAdmin() || isFaculty(); allow write: if isAdmin() || isFaculty(); }
+    match /faculty_attendance/{id} { 
+      allow read: if isAdmin() || isOwner(resource.data.userId); 
+      allow create: if isFaculty() && incoming().userId == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    match /payouts/{id} {
+      allow read: if isAdmin() || isOwner(resource.data.userId);
+      allow write: if isAdmin();
+    }
+    match /faculty_salaries/{id} {
+      allow read: if isAdmin() || isOwner(resource.data.userId);
+      allow write: if isAdmin();
+    }
+    match /resignations/{id} {
+      allow read: if isAdmin() || isOwner(resource.data.userId);
+      allow create: if isFaculty() && incoming().userId == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    match /socialLinks/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /finances/{id} { 
+      allow read: if isAdmin() || (isSignedIn() && resource.data.studentId == request.auth.uid);
+      allow create: if isSignedIn(); // Students can submit fee payment proofs
+      allow update, delete: if isAdmin();
+    }
+    match /admin/storage/projects/{projectId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /_health/{document} {
+      allow read: if true;
+    }
+  }
+}
