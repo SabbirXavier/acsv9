@@ -65,6 +65,12 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
     }
   }, [facultyAssignedSubject, selectedBatch]);
 
+  const getBatchGrade = (batch: any) => {
+    if (batch.grade) return batch.grade;
+    const match = `${batch.name} ${batch.tag || ''}`.match(/\b(XII|XI|X)\b/i);
+    return match ? match[0].toUpperCase() : null;
+  };
+
   const batchWiseReport = React.useMemo(() => {
     if (!isAdmin) return {};
     const report: Record<string, {
@@ -76,7 +82,7 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
 
     studentAttendance.forEach(a => {
        const batchId = a.batchId;
-       const subject = a.subject || 'ALL';
+       const subject = a.subject || 'Various Subjects';
        if (!batchId) return;
        const reportKey = `${batchId}_${subject}`;
        if (!report[reportKey]) {
@@ -107,14 +113,15 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
 
     allEnrollments.filter(e => e.feeStatus !== 'Pending').forEach(student => {
        const studentBatches = batches.filter(b => {
-          if (b.grade !== student.grade) return false;
-          if (student.batchId && student.batchId !== b.id) return false;
-          return true;
+          const bGrade = getBatchGrade(b);
+          if (student.batchId) return student.batchId === b.id;
+          if (bGrade && student.grade === bGrade) return true;
+          return false;
        });
 
        studentBatches.forEach(b => {
-          const subjectsToInject = ['ALL', ...(student.subjects || [])];
-          subjectsToInject.forEach(sub => {
+          const subjectsToInject = student.subjects && student.subjects.length > 0 ? student.subjects : ['Various Subjects'];
+          subjectsToInject.forEach((sub: string) => {
              const reportKey = `${b.id}_${sub}`;
              if (!report[reportKey]) {
                 report[reportKey] = { batchName: b.name, subject: sub, totalClasses: 0, students: {} };
@@ -175,18 +182,34 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
   useEffect(() => {
     if (selectedBatch) {
       const fetchStudents = async () => {
-        const q = query(
-          collection(db, 'enrollments'), 
-          where('grade', '==', selectedBatch.grade)
-        );
+        const batchGrade = getBatchGrade(selectedBatch);
+        let q;
+        if (batchGrade) {
+           q = query(collection(db, 'enrollments'), where('grade', '==', batchGrade));
+        } else {
+           q = query(collection(db, 'enrollments'));
+        }
+        
         const snap = await getDocs(q);
         
         let fetchedStudents = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        // Filter out students explicitly assigned to a different batch
+        // Filter out students not tied to this batch
         fetchedStudents = fetchedStudents.filter((s: any) => {
-          if (s.batchId && s.batchId !== selectedBatch.id) return false;
-          return true;
+          if (s.batchId) return s.batchId === selectedBatch.id;
+          if (batchGrade && s.grade === batchGrade) return true;
+          return false;
         });
+
+        // Fetch students whose explicit batchId matches, but may have a different grade
+        if (batchGrade) {
+           const explicitQ = query(collection(db, 'enrollments'), where('batchId', '==', selectedBatch.id));
+           const explicitSnap = await getDocs(explicitQ);
+           explicitSnap.docs.forEach(doc => {
+              if (!fetchedStudents.some(s => s.id === doc.id)) {
+                 fetchedStudents.push({ id: doc.id, ...doc.data() });
+              }
+           });
+        }
 
         setStudents(fetchedStudents);
       };
@@ -708,7 +731,7 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
                        .sort((a, b) => a[1].batchName.localeCompare(b[1].batchName) || a[1].subject.localeCompare(b[1].subject))
                        .map(([key, data]) => (
                        <option key={key} value={key}>
-                         {data.batchName} {data.subject !== 'ALL' ? `- ${data.subject}` : ''}
+                         {data.batchName} {data.subject !== 'ALL' && data.subject !== 'Various Subjects' ? `- ${data.subject}` : ''}
                        </option>
                      ))}
                    </select>
@@ -724,7 +747,7 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
                          <div>
                            <div className="flex items-center gap-3">
                              <h4 className="font-black text-[var(--primary)] text-lg">{batchData.batchName}</h4>
-                             {batchData.subject !== 'ALL' && (
+                             {batchData.subject !== 'ALL' && batchData.subject !== 'Various Subjects' && (
                                <span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs font-black uppercase tracking-widest">{batchData.subject}</span>
                              )}
                            </div>
