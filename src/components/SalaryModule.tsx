@@ -46,6 +46,9 @@ export default function SalaryModule({ user, isAdmin, isFaculty, facultyBatches 
   const [isResigning, setIsResigning] = useState(false);
   const [resignationDate, setResignationDate] = useState('');
   const [isRequestingPayout, setIsRequestingPayout] = useState(false);
+  const [resignations, setResignations] = useState<any[]>([]);
+  const [isAddingPayout, setIsAddingPayout] = useState(false);
+  const [payoutForm, setPayoutForm] = useState({ userId: '', amount: '', transactionId: '', note: '' });
 
   useEffect(() => {
     const unsubSalaries = firestoreService.listenToCollection('faculty_salaries', (data) => {
@@ -67,6 +70,10 @@ export default function SalaryModule({ user, isAdmin, isFaculty, facultyBatches 
       setEnrollments(data);
     });
 
+    const unsubResignations = firestoreService.listenToCollection('resignations', (data) => {
+      setResignations(data);
+    });
+
     if (isAdmin) {
       const fetchFaculty = async () => {
          const q = query(collection(db, 'users'), where('roles', 'array-contains', 'faculty'));
@@ -84,6 +91,7 @@ export default function SalaryModule({ user, isAdmin, isFaculty, facultyBatches 
       unsubPayouts();
       unsubAttendance();
       unsubEnrollments();
+      unsubResignations();
     };
   }, [user.uid, isAdmin, isFaculty]);
 
@@ -191,10 +199,19 @@ export default function SalaryModule({ user, isAdmin, isFaculty, facultyBatches 
           )}
           {isAdmin && (
             <button 
-              onClick={() => setActiveTab('settings')}
+              onClick={() => setActiveTab('settings' as any)}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'settings' ? 'bg-[var(--primary)] text-white' : 'text-gray-500 hover:text-white'}`}
             >
               Faculty Settings
+            </button>
+          )}
+          {isAdmin && (
+            <button 
+              onClick={() => setActiveTab('requests' as any)}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === ('requests' as any) ? 'bg-[var(--primary)] text-white' : 'text-gray-500 hover:text-white'}`}
+            >
+              Requests
+              {resignations.length > 0 && <span className="ml-2 px-1.5 py-0.5 bg-red-500 text-white rounded text-[10px]">{resignations.length}</span>}
             </button>
           )}
           <button 
@@ -371,7 +388,7 @@ export default function SalaryModule({ user, isAdmin, isFaculty, facultyBatches 
              <div className="p-4 border-b border-white/5 bg-white/5 flex justify-between items-center">
                <span className="font-bold italic">ALL TRANSACTION LOGS</span>
                {isAdmin && (
-                  <button className="p-2 bg-[var(--primary)] text-white rounded-lg"><Plus size={16} /></button>
+                  <button onClick={() => setIsAddingPayout(true)} className="p-2 bg-[var(--primary)] text-white rounded-lg hover:opacity-80 transition-opacity"><Plus size={16} /></button>
                )}
              </div>
              <div className="overflow-x-auto">
@@ -438,6 +455,109 @@ export default function SalaryModule({ user, isAdmin, isFaculty, facultyBatches 
         )}
       </AnimatePresence>
 
+      {/* Requests Tab */}
+      <AnimatePresence mode="wait">
+        {(activeTab as any) === 'requests' && isAdmin && (
+          <motion.div key="requests" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+            <h3 className="font-bold text-lg mb-4 text-amber-500 flex items-center gap-2">
+              <AlertCircle size={20} /> Action Required
+            </h3>
+            <div className="grid gap-4">
+              {resignations.length === 0 && <div className="p-8 text-center text-sm opacity-50 italic border border-dashed border-white/10 rounded-2xl">No pending requests</div>}
+              {resignations.map(req => (
+                <div key={req.id} className="glass-card p-6 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-l-4 border-amber-500">
+                  <div>
+                    <h4 className="font-bold">{req.userName} <span className="text-[10px] bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded ml-2 uppercase tracking-widest">{req.status}</span></h4>
+                    <p className="text-xs opacity-60 mt-1">Resignation submitted. Proposed LWD: {req.resignationDate}</p>
+                    <p className="text-[10px] opacity-40 mt-1">Email: {req.email}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => firestoreService.updateItem('resignations', req.id, { status: 'approved', approvedAt: new Date().toISOString() })} className="px-4 py-2 bg-green-500/10 text-green-500 rounded-lg text-xs font-bold hover:bg-green-500 text-white transition-colors">Approve</button>
+                    <button onClick={() => firestoreService.updateItem('resignations', req.id, { status: 'rejected' })} className="px-4 py-2 bg-red-500/10 text-red-500 rounded-lg text-xs font-bold hover:bg-red-500 hover:text-white transition-colors">Reject</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Add Payout Modal */}
+      <AnimatePresence>
+        {isAddingPayout && isAdmin && (
+          <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setIsAddingPayout(false)} />
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="relative w-full max-w-md bg-white dark:bg-[#1e1e1e] rounded-3xl p-8 space-y-6">
+              <h3 className="text-xl font-black italic">RECORD MANUAL PAYOUT</h3>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase opacity-40">Select Faculty</label>
+                  <select
+                    className="w-full p-3 bg-gray-100 dark:bg-white/5 border border-white/10 rounded-xl text-sm"
+                    value={payoutForm.userId}
+                    onChange={e => setPayoutForm({...payoutForm, userId: e.target.value})}
+                  >
+                    <option value="">Select Faculty...</option>
+                    {facultyList.map(f => (
+                      <option key={f.id} value={f.id}>{f.name || f.email}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase opacity-40">Amount (₹)</label>
+                  <input
+                    type="number"
+                    className="w-full p-3 bg-gray-100 dark:bg-white/5 border border-white/10 rounded-xl text-sm outline-none focus:border-[var(--primary)]"
+                    value={payoutForm.amount}
+                    onChange={e => setPayoutForm({...payoutForm, amount: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase opacity-40">Transaction ID</label>
+                  <input
+                    type="text"
+                    className="w-full p-3 bg-gray-100 dark:bg-white/5 border border-white/10 rounded-xl text-sm outline-none focus:border-[var(--primary)]"
+                    value={payoutForm.transactionId}
+                    onChange={e => setPayoutForm({...payoutForm, transactionId: e.target.value})}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black uppercase opacity-40">Note</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Cleared pending dues"
+                    className="w-full p-3 bg-gray-100 dark:bg-white/5 border border-white/10 rounded-xl text-sm outline-none focus:border-[var(--primary)]"
+                    value={payoutForm.note}
+                    onChange={e => setPayoutForm({...payoutForm, note: e.target.value})}
+                  />
+                </div>
+              </div>
+              <button 
+                onClick={() => {
+                  const targetFaculty = facultyList.find(f => f.id === payoutForm.userId);
+                  if (targetFaculty && payoutForm.amount) {
+                    recordPayout({
+                      userId: targetFaculty.id,
+                      userName: targetFaculty.name || targetFaculty.email,
+                      amount: Number(payoutForm.amount),
+                      transactionId: payoutForm.transactionId,
+                      note: payoutForm.note
+                    });
+                    setIsAddingPayout(false);
+                    setPayoutForm({ userId: '', amount: '', transactionId: '', note: '' });
+                  } else {
+                    toast.error('Select faculty and enter amount');
+                  }
+                }}
+                className="w-full py-4 bg-[var(--primary)] text-white rounded-2xl font-black uppercase tracking-widest hover:opacity-90"
+              >
+                Save Payout Record
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Resignation Modal */}
       <AnimatePresence>
         {isResigning && (
@@ -447,7 +567,7 @@ export default function SalaryModule({ user, isAdmin, isFaculty, facultyBatches 
                 <h3 className="text-2xl font-black italic">SUBMIT RESIGNATION</h3>
                 <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-xs space-y-2 text-amber-500">
                    <p className="font-bold flex items-center gap-2"><AlertCircle size={14}/> Notice Period Policy</p>
-                   <p className="opacity-80">Employees must provide a 15-day notice period. A full calendar month notice is preferred for smooth transitions.</p>
+                   <p className="opacity-80">Employees must provide a 15-day notice period. A full calendar month notice is mandate to complete full calendar month.</p>
                 </div>
                 <div className="space-y-2">
                    <label className="text-[10px] font-black uppercase opacity-40">Proposed Last Working Day</label>

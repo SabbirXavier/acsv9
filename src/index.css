@@ -116,6 +116,12 @@
     @apply !text-[1.1em];
   }
 
+  /* Global select option styling for better contrast in light/dark modes */
+  select option {
+    background-color: var(--bg-color);
+    color: var(--text-color);
+  }
+
   .inline-markdown {
     display: inline;
   }

@@ -73,6 +73,7 @@ export default function TabAdmin({ branding }: { branding?: any }) {
   const [courseFolders, setCourseFolders] = useState<any[]>([]);
   const [batchFaculty, setBatchFaculty] = useState<any[]>([]);
   const [chatUsers, setChatUsers] = useState<any[]>([]);
+  const [leads, setLeads] = useState<any[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [editingChannel, setEditingChannel] = useState<Channel | null>(null);
 
@@ -299,6 +300,7 @@ export default function TabAdmin({ branding }: { branding?: any }) {
 
     firestoreService.listenToCollection('batches', setBatches);
     firestoreService.listenToCollection('enrollments', setEnrollments);
+    firestoreService.listenToCollection('leads', setLeads);
     firestoreService.listenToCollection('routines', setRoutines);
     firestoreService.listenToCollection('downloads', setDownloads);
     firestoreService.listenToCollection('fees', (data) => {
@@ -594,6 +596,7 @@ export default function TabAdmin({ branding }: { branding?: any }) {
     { id: 'verified', label: 'Verified Users', icon: Shield },
     { id: 'exclusive', label: 'Batch Materials', icon: BookOpen },
     { id: 'faculty', label: 'Faculty Access', icon: ShieldAlert },
+    { id: 'leads', label: 'Leads Inbox', icon: Users },
     { id: 'routines', label: 'Routines', icon: Calendar },
     { id: 'downloads', label: 'Downloads', icon: Download },
     { id: 'attendance', label: 'Attendance', icon: CheckCircle2 },
@@ -998,6 +1001,7 @@ export default function TabAdmin({ branding }: { branding?: any }) {
             isAdmin={true} 
             isFaculty={true} 
             facultyBatches={batchFaculty} 
+            source="admin"
           />
         )}
         {activeSection === 'salary' && (
@@ -2011,23 +2015,21 @@ export default function TabAdmin({ branding }: { branding?: any }) {
                               const subjectSelect = document.getElementById(`faculty-subject-${batch.id}`) as HTMLSelectElement;
                               const selectedSubject = subjectSelect?.value || 'ALL';
 
-                              if (window.confirm(`Grant Faculty access (${selectedSubject}) to ${targetUser?.name} for batch ${batch.name}?`)) {
-                                await createItem('batchFaculty', {
-                                  batchId: batch.id,
-                                  batchName: batch.name,
-                                  userId: userId,
-                                  userEmail: targetUser?.email,
-                                  subject: selectedSubject,
-                                  grantedAt: new Date().toISOString()
-                                });
-                                // Automatically upgrade role to Faculty if not admin
-                                if (targetUser.role !== 'admin' && !(targetUser.roles || []).includes('admin')) {
-                                  const currentRoles = targetUser.roles || [targetUser.role || 'student'];
-                                  const newRoles = Array.from(new Set([...currentRoles, 'faculty']));
-                                  await updateItem('users', userId, { ...targetUser, role: 'faculty', roles: newRoles });
-                                }
-                                toast.success('Faculty access granted');
+                              // Automatically upgrade role to Faculty if not admin
+                              await createItem('batchFaculty', {
+                                batchId: batch.id,
+                                batchName: batch.name,
+                                userId: userId,
+                                userEmail: targetUser?.email,
+                                subject: selectedSubject,
+                                grantedAt: new Date().toISOString()
+                              });
+                              if (targetUser && targetUser.role !== 'admin' && !(targetUser.roles || []).includes('admin')) {
+                                const currentRoles = targetUser.roles || [targetUser.role || 'student'];
+                                const newRoles = Array.from(new Set([...currentRoles, 'faculty']));
+                                await updateItem('users', userId, { ...targetUser, role: 'faculty', roles: newRoles });
                               }
+                              toast.success('Faculty access granted');
                             }}
                           />
                         </div>
@@ -2089,8 +2091,8 @@ export default function TabAdmin({ branding }: { branding?: any }) {
               </div>
             </div>
 
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="flex-1 glass-card p-5 border-l-4 border-green-500">
+            <div className="flex flex-col md:flex-row gap-4 relative z-50">
+              <div className="flex-1 glass-card p-5 border-l-4 border-green-500 relative z-50 overflow-visible">
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-10 h-10 rounded-full bg-green-500/20 text-green-600 flex items-center justify-center">
                     <UserPlus size={20} />
@@ -2186,6 +2188,106 @@ export default function TabAdmin({ branding }: { branding?: any }) {
               </table>
               {enrollments.filter(s => s.feeStatus === 'Paid').length === 0 && (
                 <div className="text-center py-10 opacity-50 font-bold">No verified students found.</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeSection === 'leads' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-teal-500/10 p-5 rounded-3xl border border-teal-500/20">
+              <div>
+                <h3 className="text-xl font-bold text-teal-600 dark:text-teal-400">Leads Inbox</h3>
+                <p className="text-xs opacity-60 font-medium">Potential students who inquired from the landing page</p>
+              </div>
+              <div className="relative w-full sm:w-72">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-teal-600/50" size={16} />
+                <input 
+                  type="text" 
+                  placeholder="Filter leads..." 
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 bg-white/10 border border-teal-500/20 rounded-xl focus:outline-none focus:border-teal-500/50 transition-all text-sm font-medium placeholder:text-teal-600/30"
+                />
+              </div>
+            </div>
+
+            <div className="overflow-x-auto glass-card !p-0">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-[var(--border-color)] bg-white/5">
+                    <th className="p-3 text-xs font-bold uppercase opacity-60">Submitted At</th>
+                    <th className="p-3 text-xs font-bold uppercase opacity-60">Lead Info</th>
+                    <th className="p-3 text-xs font-bold uppercase opacity-60">Course / Notes</th>
+                    <th className="p-3 text-xs font-bold uppercase opacity-60">Status</th>
+                    <th className="p-3 text-xs font-bold uppercase opacity-60 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {leads
+                    .filter(l => 
+                      (l.name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      (l.phone || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      (l.email || '').toLowerCase().includes(searchQuery.toLowerCase())
+                    )
+                    .sort((a, b) => {
+                      const da = a.createdAt?.seconds || 0;
+                      const db = b.createdAt?.seconds || 0;
+                      return db - da; // Newest first
+                    })
+                    .map((lead, i) => (
+                    <tr key={lead.id || i} className="border-b border-[var(--border-color)] hover:bg-white/5 transition-colors">
+                      <td className="p-3">
+                        <div className="text-xs font-bold">
+                           {lead.createdAt?.seconds ? new Date(lead.createdAt.seconds * 1000).toLocaleDateString() : 'N/A'}
+                        </div>
+                        <div className="text-[10px] opacity-60">
+                           {lead.createdAt?.seconds ? new Date(lead.createdAt.seconds * 1000).toLocaleTimeString() : ''}
+                        </div>
+                      </td>
+                      <td className="p-3">
+                        <div className="font-bold text-sm">{lead.name}</div>
+                        <div className="flex flex-col gap-1 mt-1">
+                           <a href={`tel:${lead.phone}`} className="text-xs text-teal-500 hover:underline">{lead.phone}</a>
+                           {lead.email && <div className="text-xs opacity-60">{lead.email}</div>}
+                        </div>
+                      </td>
+                      <td className="p-3">
+                         <div className="text-xs font-bold px-2 py-1 bg-white/5 inline-block rounded">{lead.course || 'Unspecified'}</div>
+                      </td>
+                      <td className="p-3">
+                        <select 
+                           value={lead.status || 'new'} 
+                           onChange={(e) => firestoreService.updateItem('leads', lead.id, {status: e.target.value})}
+                           className={`text-xs font-bold uppercase px-2 py-1 rounded outline-none border-none
+                             ${lead.status === 'contacted' ? 'bg-amber-500/20 text-amber-500' : 
+                               lead.status === 'enrolled' ? 'bg-green-500/20 text-green-500' : 'bg-blue-500/20 text-blue-500'}`}
+                        >
+                          <option value="new" className="bg-[#111]">New</option>
+                          <option value="contacted" className="bg-[#111]">Contacted</option>
+                          <option value="enrolled" className="bg-[#111]">Enrolled</option>
+                        </select>
+                      </td>
+                      <td className="p-3 text-right flex items-center justify-end gap-2">
+                        <button 
+                          onClick={() => window.open(`https://wa.me/${lead.phone.replace(/[^0-9]/g, '')}`, '_blank')}
+                          className="px-3 py-1 bg-[#25D366]/10 text-[#25D366] rounded-lg text-xs font-bold hover:bg-[#25D366]/20 transition-all flex items-center gap-1"
+                        >
+                          WhatsApp
+                        </button>
+                        <button 
+                          onClick={() => window.confirm(`Delete lead ${lead.name}?`) && firestoreService.deleteItem('leads', lead.id)}
+                          className="px-3 py-1 bg-red-500/10 text-red-500 hover:bg-red-500/20 rounded-lg text-xs font-bold transition-all"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {leads.length === 0 && (
+                <div className="text-center py-10 opacity-50 font-bold">No leads found.</div>
               )}
             </div>
           </div>

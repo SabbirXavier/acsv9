@@ -11,7 +11,9 @@ import {
   ChevronRight,
   Filter,
   AlertCircle,
-  FileText
+  FileText,
+  Download,
+  MessageSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { firestoreService } from '../services/firestoreService';
@@ -24,10 +26,13 @@ interface AttendanceModuleProps {
   isAdmin: boolean;
   isFaculty: boolean;
   facultyBatches: any[];
+  source?: 'admin' | 'mybatch';
 }
 
-export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatches }: AttendanceModuleProps) {
-  const [activeTab, setActiveTab] = useState<'student' | 'faculty' | 'reports'>(isAdmin ? 'reports' : (isFaculty ? 'student' : 'student'));
+export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatches, source = 'mybatch' }: AttendanceModuleProps) {
+  const [activeTab, setActiveTab] = useState<'student' | 'faculty' | 'reports'>(
+    source === 'admin' ? 'reports' : (isFaculty ? 'student' : 'student')
+  );
   const [batches, setBatches] = useState<any[]>([]);
   const [selectedBatch, setSelectedBatch] = useState<any | null>(null);
   const [students, setStudents] = useState<any[]>([]);
@@ -38,9 +43,100 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
   const [facultyAttendance, setFacultyAttendance] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
+  const [studentAttendance, setStudentAttendance] = useState<any[]>([]);
+  const [reportTab, setReportTab] = useState<'faculty' | 'student'>('student');
+  const [messagingConfig, setMessagingConfig] = useState({ provider: 'whatsapp', apiKey: '', template: 'Hello {name}, your attendance is marked as {status} for {date}.' });
+  const [showConfig, setShowConfig] = useState(false);
+  const [allEnrollments, setAllEnrollments] = useState<any[]>([]);
+  const [reportBatchFilter, setReportBatchFilter] = useState('ALL');
+  const [selectedSubject, setSelectedSubject] = useState<string>('ALL');
+
+  const facultyAssignedSubject = React.useMemo(() => {
+    if (isAdmin || !isFaculty || !selectedBatch) return null;
+    const fb = facultyBatches?.find(f => f.batchId === selectedBatch.id);
+    return fb ? fb.subject : null;
+  }, [isAdmin, isFaculty, selectedBatch, facultyBatches]);
+
+  useEffect(() => {
+    if (facultyAssignedSubject && facultyAssignedSubject !== 'ALL') {
+      setSelectedSubject(facultyAssignedSubject);
+    } else {
+      setSelectedSubject('ALL');
+    }
+  }, [facultyAssignedSubject, selectedBatch]);
+
+  const batchWiseReport = React.useMemo(() => {
+    if (!isAdmin) return {};
+    const report: Record<string, {
+      batchName: string;
+      subject: string;
+      totalClasses: number;
+      students: Record<string, { name: string; email: string; whatsapp: string; present: number; absent: number; }>;
+    }> = {};
+
+    studentAttendance.forEach(a => {
+       const batchId = a.batchId;
+       const subject = a.subject || 'ALL';
+       if (!batchId) return;
+       const reportKey = `${batchId}_${subject}`;
+       if (!report[reportKey]) {
+          report[reportKey] = { batchName: a.batchName || 'Unknown Batch', subject: subject, totalClasses: 0, students: {} };
+       }
+       report[reportKey].totalClasses++;
+
+       if (a.records) {
+          Object.entries(a.records).forEach(([studentId, status]) => {
+             if (!report[reportKey].students[studentId]) {
+                const sData = allEnrollments.find(e => e.id === studentId);
+                report[reportKey].students[studentId] = {
+                   name: sData ? sData.name : 'Unknown Student',
+                   email: sData ? sData.email : '',
+                   whatsapp: sData ? sData.whatsapp : '',
+                   present: 0,
+                   absent: 0
+                };
+             }
+             if (status === 'present') {
+                report[reportKey].students[studentId].present++;
+             } else if (status === 'absent') {
+                report[reportKey].students[studentId].absent++;
+             }
+          });
+       }
+    });
+
+    allEnrollments.filter(e => e.feeStatus !== 'Pending').forEach(student => {
+       const studentBatches = batches.filter(b => {
+          if (b.grade !== student.grade) return false;
+          if (student.batchId && student.batchId !== b.id) return false;
+          return true;
+       });
+
+       studentBatches.forEach(b => {
+          const subjectsToInject = ['ALL', ...(student.subjects || [])];
+          subjectsToInject.forEach(sub => {
+             const reportKey = `${b.id}_${sub}`;
+             if (!report[reportKey]) {
+                report[reportKey] = { batchName: b.name, subject: sub, totalClasses: 0, students: {} };
+             }
+             if (!report[reportKey].students[student.id]) {
+                report[reportKey].students[student.id] = {
+                   name: student.name || 'Unknown',
+                   email: student.email || '',
+                   whatsapp: student.whatsapp || '',
+                   present: 0,
+                   absent: 0
+                };
+             }
+          });
+       });
+    });
+
+    return report;
+  }, [studentAttendance, allEnrollments, batches, isAdmin]);
+
   useEffect(() => {
     const unsubBatches = firestoreService.listenToCollection('batches', (data) => {
-      // If faculty and not admin, filter batches to only those they are assigned to
       const filteredBatches = (isFaculty && !isAdmin) 
         ? data.filter(b => facultyBatches.some(fb => fb.batchId === b.id))
         : data;
@@ -57,22 +153,62 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
       setFacultyAttendance(data.sort((a, b) => b.date?.seconds - a.date?.seconds));
     });
 
+    let unsubStudentAttendance = () => {};
+    let unsubEnrollments = () => {};
+    if (isAdmin) {
+      unsubStudentAttendance = firestoreService.listenToCollection('attendance', (data) => {
+        setStudentAttendance(data.sort((a, b) => b.date?.seconds - a.date?.seconds));
+      });
+      unsubEnrollments = firestoreService.listenToCollection('enrollments', (data) => {
+        setAllEnrollments(data);
+      });
+    }
+
     return () => {
       unsubBatches();
       unsubFacultyAttendance();
+      unsubStudentAttendance();
+      unsubEnrollments();
     };
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => {
     if (selectedBatch) {
       const fetchStudents = async () => {
-        const q = query(collection(db, 'enrollments'), where('grade', '==', selectedBatch.grade), where('feeStatus', '==', 'Paid'));
+        const q = query(
+          collection(db, 'enrollments'), 
+          where('grade', '==', selectedBatch.grade)
+        );
         const snap = await getDocs(q);
-        setStudents(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        
+        let fetchedStudents = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        // Filter out students explicitly assigned to a different batch
+        fetchedStudents = fetchedStudents.filter((s: any) => {
+          if (s.batchId && s.batchId !== selectedBatch.id) return false;
+          return true;
+        });
+
+        setStudents(fetchedStudents);
       };
       fetchStudents();
     }
   }, [selectedBatch]);
+
+  const availableSubjects = React.useMemo(() => {
+    if (facultyAssignedSubject && facultyAssignedSubject !== 'ALL') {
+      return [facultyAssignedSubject];
+    }
+    const subs = new Set<string>();
+    students.forEach((s: any) => {
+      (s.subjects || []).forEach((sub: string) => subs.add(sub));
+    });
+    return Array.from(subs).sort();
+  }, [students, facultyAssignedSubject]);
+
+  const visibleStudents = React.useMemo(() => {
+    if (selectedSubject === 'ALL') return students;
+    return students.filter((s: any) => s.subjects && s.subjects.includes(selectedSubject));
+  }, [students, selectedSubject]);
 
   const handleMarkAttendance = async () => {
     if (!selectedBatch) return;
@@ -81,6 +217,7 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
       const record = {
         batchId: selectedBatch.id,
         batchName: selectedBatch.name,
+        subject: selectedSubject,
         date: Timestamp.fromDate(new Date(attendanceDate)),
         records: attendanceRecords,
         markedBy: user.email,
@@ -144,25 +281,29 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
           <p className="text-sm opacity-60">Manage student and faculty presence</p>
         </div>
         
-        <div className="flex gap-2 p-1 bg-white/5 rounded-2xl border border-white/5">
-          <button 
-            onClick={() => setActiveTab('student')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'student' ? 'bg-[var(--primary)] text-white' : 'text-gray-500 hover:text-white'}`}
-          >
-            Take Student Attendance
-          </button>
-          <button 
-            onClick={() => setActiveTab('faculty')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'faculty' ? 'bg-[var(--primary)] text-white' : 'text-gray-500 hover:text-white'}`}
-          >
-            My Attendance
-          </button>
+        <div className="flex gap-2 p-1 bg-white/5 rounded-2xl border border-white/5 overflow-x-auto custom-scrollbar-horizontal w-full">
+          {source === 'mybatch' && (
+            <button 
+              onClick={() => setActiveTab('student')}
+              className={`px-4 py-2 whitespace-nowrap rounded-xl text-xs font-bold transition-all ${activeTab === 'student' ? 'bg-[var(--primary)] text-white' : 'text-gray-500 hover:text-white'}`}
+            >
+              Take Student Attendance
+            </button>
+          )}
+          {source === 'mybatch' && (
+            <button 
+              onClick={() => setActiveTab('faculty')}
+              className={`px-4 py-2 whitespace-nowrap rounded-xl text-xs font-bold transition-all ${activeTab === 'faculty' ? 'bg-[var(--primary)] text-white' : 'text-gray-500 hover:text-white'}`}
+            >
+              My Attendance
+            </button>
+          )}
           {isAdmin && (
             <button 
               onClick={() => setActiveTab('reports')}
-              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeTab === 'reports' ? 'bg-[var(--primary)] text-white' : 'text-gray-500 hover:text-white'}`}
+              className={`px-4 py-2 whitespace-nowrap rounded-xl text-xs font-bold transition-all ${activeTab === 'reports' ? 'bg-[var(--primary)] text-white' : 'text-gray-500 hover:text-white'}`}
             >
-              Master Report
+              Master Attendance Reports
             </button>
           )}
         </div>
@@ -177,7 +318,7 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
             exit={{ opacity: 0, y: -10 }}
             className="space-y-4"
           >
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="glass-card p-4 space-y-2">
                 <label className="text-[10px] font-black uppercase opacity-40">Select Batch</label>
                 <select 
@@ -189,6 +330,18 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
                 </select>
               </div>
               <div className="glass-card p-4 space-y-2">
+                <label className="text-[10px] font-black uppercase opacity-40">Select Subject</label>
+                <select 
+                  value={selectedSubject}
+                  onChange={(e) => setSelectedSubject(e.target.value)}
+                  disabled={!!(facultyAssignedSubject && facultyAssignedSubject !== 'ALL')}
+                  className="w-full p-3 bg-white/5 border border-white/10 rounded-xl outline-none text-xs font-bold [&>option]:bg-gray-900"
+                >
+                  <option value="ALL">All Subjects</option>
+                  {availableSubjects.map(sub => <option key={sub} value={sub}>{sub}</option>)}
+                </select>
+              </div>
+              <div className="glass-card p-4 space-y-2">
                 <label className="text-[10px] font-black uppercase opacity-40">Attendance Date</label>
                 <input 
                   type="date" 
@@ -197,14 +350,14 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
                   className="w-full p-3 bg-white/5 border border-white/10 rounded-xl outline-none text-xs font-bold"
                 />
               </div>
-              <div className="glass-card p-4 flex items-center justify-between">
-                <div>
-                  <div className="text-xl font-black">{students.length}</div>
-                  <div className="text-[10px] opacity-40 uppercase font-black">Students to Mark</div>
+              <div className="glass-card p-4 flex flex-col justify-center items-center relative">
+                <div className="absolute top-2 left-4">
+                  <div className="text-xl font-black">{visibleStudents.length}</div>
+                  <div className="text-[10px] opacity-40 uppercase font-black tracking-wider">Tgt Students</div>
                 </div>
                 <button 
                   onClick={handleMarkAttendance}
-                  className="px-6 py-3 bg-green-500 text-white rounded-xl font-black text-xs shadow-lg shadow-green-500/20 hover:scale-105 transition-all"
+                  className="w-full mt-4 px-6 py-3 bg-green-500 text-white rounded-xl font-black text-xs shadow-lg shadow-green-500/20 hover:scale-105 transition-all"
                 >
                   SAVE ALL
                 </button>
@@ -220,16 +373,16 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
                    <button 
                     onClick={() => {
                       const all: any = {};
-                      students.forEach(s => all[s.id] = 'present');
+                      visibleStudents.forEach((s: any) => all[s.id] = 'present');
                       setAttendanceRecords(all);
                     }}
-                    className="text-[10px] font-black opacity-50 hover:opacity-100 uppercase"
+                    className="text-[10px] font-black opacity-50 hover:opacity-100 uppercase bg-white/5 px-2 py-1 rounded"
                    >
                      All Present
                    </button>
                    <button 
                     onClick={() => setAttendanceRecords({})}
-                    className="text-[10px] font-black opacity-50 hover:opacity-100 uppercase"
+                    className="text-[10px] font-black opacity-50 hover:opacity-100 uppercase bg-white/5 px-2 py-1 rounded"
                    >
                      Clear
                    </button>
@@ -240,19 +393,26 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
                   <thead className="bg-white/5 text-[10px] font-black uppercase opacity-40">
                     <tr>
                       <th className="p-4">Student</th>
+                      <th className="p-4 text-center">Enrollment Status</th>
                       <th className="p-4">Batch Info</th>
-                      <th className="p-4 text-center w-48">Status</th>
+                      <th className="p-4 text-center w-48">Attendance</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
-                    {students.map(student => (
+                    {visibleStudents.map((student: any) => (
                       <tr key={student.id} className="hover:bg-white/5 transition-colors">
                         <td className="p-4">
                           <div className="font-bold text-sm">{student.name}</div>
                           <div className="text-[10px] opacity-40">{student.email}</div>
                         </td>
+                        <td className="p-4 text-center">
+                          <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${student.feeStatus === 'Paid' ? 'bg-green-500/20 text-green-500' : 'bg-amber-500/20 text-amber-500'}`}>
+                            {student.feeStatus === 'Paid' ? 'Verified / Paid' : student.feeStatus || 'Pending'}
+                          </span>
+                        </td>
                         <td className="p-4 text-xs opacity-60">
                           {student.grade} • {student.batchName}
+                          <div className="text-[9px] mt-1 text-indigo-400 font-bold">{(student.subjects || []).join(', ')}</div>
                         </td>
                         <td className="p-4">
                           <div className="flex p-1 bg-white/5 rounded-xl border border-white/10">
@@ -260,18 +420,21 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
                               onClick={() => setAttendanceRecords({...attendanceRecords, [student.id]: 'present'})}
                               className={`flex-1 py-1.5 rounded-lg flex items-center justify-center gap-1 text-[10px] font-black transition-all ${attendanceRecords[student.id] === 'present' ? 'bg-green-500 text-white shadow-lg' : 'opacity-40'}`}
                             >
-                              <UserCheck size={12} /> PRESENT
+                              <UserCheck size={12} /> P
                             </button>
                             <button 
                               onClick={() => setAttendanceRecords({...attendanceRecords, [student.id]: 'absent'})}
                               className={`flex-1 py-1.5 rounded-lg flex items-center justify-center gap-1 text-[10px] font-black transition-all ${attendanceRecords[student.id] === 'absent' ? 'bg-red-500 text-white shadow-lg' : 'opacity-40'}`}
                             >
-                              <UserX size={12} /> ABSENT
+                              <UserX size={12} /> A
                             </button>
                           </div>
                         </td>
                       </tr>
                     ))}
+                    {visibleStudents.length === 0 && (
+                      <tr><td colSpan={4} className="p-8 text-center text-sm opacity-50 italic">No students found for this selection.</td></tr>
+                    )}
                   </tbody>
                 </table>
               </div>
@@ -376,62 +539,254 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
             animate={{ opacity: 1 }}
             className="space-y-6"
           >
-            <div className="glass-card p-6 border-l-4 border-amber-500">
-               <h3 className="text-lg font-bold flex items-center gap-2 text-amber-500 mb-4">
-                 <AlertCircle size={20} /> Faculty Attendance Moderation
-               </h3>
-               <div className="overflow-x-auto">
-                 <table className="w-full text-left">
-                   <thead className="text-[10px] font-black uppercase opacity-40">
-                     <tr>
-                       <th className="p-4">Faculty</th>
-                       <th className="p-4">Date</th>
-                       <th className="p-4">Current Status</th>
-                       <th className="p-4 text-right">Actions</th>
-                     </tr>
-                   </thead>
-                   <tbody className="divide-y divide-white/5 text-sm">
-                      {facultyAttendance.map(a => (
-                        <tr key={a.id} className="hover:bg-white/5">
-                          <td className="p-4">
-                            <div className="font-bold">{a.userName}</div>
-                            <div className="text-[10px] opacity-40">{a.userEmail}</div>
-                          </td>
-                          <td className="p-4 font-mono">{a.dateStr}</td>
-                          <td className="p-4">
-                            <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase ${a.isApproved ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
-                              {a.isApproved ? 'Approved' : 'Disapproved'}
-                            </span>
-                          </td>
-                          <td className="p-4 text-right">
-                            {a.isApproved ? (
-                              <button 
-                                onClick={() => {
-                                  const reason = prompt('Enter reason for disapproval:');
-                                  if (reason) disapproveAttendance(a.id, reason);
-                                }}
-                                className="px-3 py-1 bg-red-500/10 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-500/20 transition-all"
-                              >
-                                DISAPPROVE
-                              </button>
-                            ) : (
-                               <button 
-                                onClick={() => updateDoc(doc(db, 'faculty_attendance', a.id), { isApproved: true, disapprovalReason: null })}
-                                className="px-3 py-1 bg-green-500/10 text-green-500 rounded-lg text-[10px] font-black hover:bg-green-500/20 transition-all"
-                              >
-                                APPROVE
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                      {facultyAttendance.length === 0 && (
-                        <tr><td colSpan={4} className="p-10 text-center opacity-40 italic">No attendance records found yet.</td></tr>
-                      )}
-                   </tbody>
-                 </table>
-               </div>
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <div className="flex gap-2 p-1 bg-white/5 rounded-2xl border border-white/5 w-full sm:w-auto">
+                <button 
+                  onClick={() => setReportTab('student')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex-1 sm:flex-none ${reportTab === 'student' ? 'bg-[var(--primary)] text-white' : 'text-gray-500 hover:text-white'}`}
+                >
+                  Student Reports
+                </button>
+                <button 
+                  onClick={() => setReportTab('faculty')}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex-1 sm:flex-none ${reportTab === 'faculty' ? 'bg-[var(--primary)] text-white' : 'text-gray-500 hover:text-white'}`}
+                >
+                  Faculty Reports
+                </button>
+              </div>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <button 
+                  onClick={() => setShowConfig(!showConfig)}
+                  className="px-4 py-2 bg-indigo-500/10 text-indigo-500 rounded-xl text-xs font-bold transition-all hover:bg-indigo-500 hover:text-white flex items-center justify-center gap-2 flex-1 sm:flex-none"
+                >
+                  <MessageSquare size={14} /> SMS / WA API
+                </button>
+                <button 
+                  onClick={() => {
+                    if (reportTab === 'student') {
+                      let csv = 'Batch,Subject,Student Name,Email,Total Classes,Present,Absent,Percentage\n';
+                      let hasData = false;
+                      Object.values(batchWiseReport).forEach(batch => {
+                        Object.entries(batch.students).forEach(([id, s]) => {
+                          hasData = true;
+                          const total = s.present + s.absent;
+                          const pct = total > 0 ? Math.round((s.present/total)*100) : 0;
+                          csv += `"${batch.batchName}","${batch.subject}","${s.name}","${s.email}",${batch.totalClasses},${s.present},${s.absent},${pct}%\n`;
+                        });
+                      });
+                      if (!hasData) return toast.error('No data to export');
+                      const blob = new Blob([csv], { type: 'text/csv' });
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `student_attendance_${new Date().toISOString().split('T')[0]}.csv`;
+                      a.click();
+                    } else {
+                      const dataToExport = facultyAttendance;
+                      if (dataToExport.length === 0) return toast.error('No data to export');
+                      let csv = 'Date,Faculty Name,Email,Status,Disapproval Reason\n' + dataToExport.map(r => `${r.dateStr},${r.userName},${r.userEmail},${r.isApproved ? 'Approved' : 'Disapproved'},${r.disapprovalReason || ''}`).join('\n');
+                      const blob = new Blob([csv], { type: 'text/csv' });
+                      const url = window.URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `faculty_attendance_${new Date().toISOString().split('T')[0]}.csv`;
+                      a.click();
+                    }
+                  }}
+                  className="px-4 py-2 bg-[var(--primary)] text-white rounded-xl text-xs font-bold hover:scale-105 transition-all flex items-center justify-center gap-2 flex-1 sm:flex-none"
+                >
+                  <Download size={14} /> Download CSV
+                </button>
+              </div>
             </div>
+
+            <AnimatePresence>
+              {showConfig && (
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                  <div className="glass-card p-6 border-l-4 border-indigo-500 space-y-4">
+                    <h3 className="font-bold flex items-center gap-2 text-indigo-500"><MessageSquare size={16} /> Automated Messaging Configuration</h3>
+                    <p className="text-xs opacity-70">Configure logic to automatically send SMS or WhatsApp templates sequentially when attendance is logged.</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase opacity-40">Provider</label>
+                        <select className="w-full p-3 rounded-xl bg-white/5 border border-white/10 outline-none text-sm [&>option]:bg-gray-900" value={messagingConfig.provider} onChange={e => setMessagingConfig({...messagingConfig, provider: e.target.value})}>
+                          <option value="whatsapp">WhatsApp (Business API)</option>
+                          <option value="twilio">Twilio SMS</option>
+                          <option value="msg91">MSG91</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase opacity-40">API Key / Token</label>
+                        <input type="password" placeholder="Enter API Key" className="w-full p-3 rounded-xl bg-white/5 border border-white/10 outline-none text-sm focus:border-indigo-500" value={messagingConfig.apiKey} onChange={e => setMessagingConfig({...messagingConfig, apiKey: e.target.value})} />
+                      </div>
+                      <div className="md:col-span-2 space-y-2">
+                        <label className="text-[10px] font-black uppercase opacity-40">Message Template</label>
+                        <textarea rows={2} className="w-full p-3 rounded-xl bg-white/5 border border-white/10 outline-none text-sm focus:border-indigo-500" value={messagingConfig.template} onChange={e => setMessagingConfig({...messagingConfig, template: e.target.value})} />
+                        <div className="text-[10px] opacity-50 font-mono">Available variables: {'{name}, {status}, {date}, {batch}'}</div>
+                      </div>
+                    </div>
+                    <div className="flex justify-end">
+                      <button onClick={() => { setShowConfig(false); toast.success('Messaging config saved locally (Preview)'); }} className="px-6 py-2 bg-indigo-500 text-white rounded-xl font-bold text-xs">Save Configuration</button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {reportTab === 'faculty' && (
+              <div className="glass-card p-6 border-l-4 border-amber-500">
+                 <h3 className="text-lg font-bold flex items-center gap-2 text-amber-500 mb-4">
+                   <AlertCircle size={20} /> Faculty Attendance Moderation
+                 </h3>
+                 <div className="overflow-x-auto">
+                   <table className="w-full text-left">
+                     <thead className="text-[10px] font-black uppercase opacity-40">
+                       <tr>
+                         <th className="p-4">Faculty</th>
+                         <th className="p-4">Date</th>
+                         <th className="p-4">Current Status</th>
+                         <th className="p-4 text-right">Actions</th>
+                       </tr>
+                     </thead>
+                     <tbody className="divide-y divide-white/5 text-sm">
+                        {facultyAttendance.map(a => (
+                          <tr key={a.id} className="hover:bg-white/5">
+                            <td className="p-4">
+                              <div className="font-bold">{a.userName}</div>
+                              <div className="text-[10px] opacity-40">{a.userEmail}</div>
+                            </td>
+                            <td className="p-4 font-mono">{a.dateStr}</td>
+                            <td className="p-4">
+                              <span className={`px-2 py-1 rounded-full text-[10px] font-black uppercase ${a.isApproved ? 'bg-green-500/20 text-green-500' : 'bg-red-500/20 text-red-500'}`}>
+                                {a.isApproved ? 'Approved' : 'Disapproved'}
+                              </span>
+                            </td>
+                            <td className="p-4 text-right">
+                              {a.isApproved ? (
+                                <button 
+                                  onClick={() => {
+                                    const reason = prompt('Enter reason for disapproval:');
+                                    if (reason) disapproveAttendance(a.id, reason);
+                                  }}
+                                  className="px-3 py-1 bg-red-500/10 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-500/20 transition-all"
+                                >
+                                  DISAPPROVE
+                                </button>
+                              ) : (
+                                 <button 
+                                  onClick={() => updateDoc(doc(db, 'faculty_attendance', a.id), { isApproved: true, disapprovalReason: null })}
+                                  className="px-3 py-1 bg-green-500/10 text-green-500 rounded-lg text-[10px] font-black hover:bg-green-500/20 transition-all"
+                                >
+                                  APPROVE
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                        {facultyAttendance.length === 0 && (
+                          <tr><td colSpan={4} className="p-10 text-center opacity-40 italic">No attendance records found yet.</td></tr>
+                        )}
+                     </tbody>
+                   </table>
+                 </div>
+              </div>
+            )}
+
+            {reportTab === 'student' && (
+              <div className="glass-card p-6 border-l-4 border-[var(--primary)] space-y-6">
+                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                   <h3 className="text-lg font-bold flex items-center gap-2">
+                     <Users size={20} /> Batch-Wise Student Attendance
+                   </h3>
+                   <select 
+                     value={reportBatchFilter}
+                     onChange={(e) => setReportBatchFilter(e.target.value)}
+                     className="p-2 bg-white/5 border border-white/10 rounded-xl outline-none text-sm font-bold [&>option]:bg-gray-900"
+                   >
+                     <option value="ALL">All Batch Groups</option>
+                     {Object.entries(batchWiseReport)
+                       .sort((a, b) => a[1].batchName.localeCompare(b[1].batchName) || a[1].subject.localeCompare(b[1].subject))
+                       .map(([key, data]) => (
+                       <option key={key} value={key}>
+                         {data.batchName} {data.subject !== 'ALL' ? `- ${data.subject}` : ''}
+                       </option>
+                     ))}
+                   </select>
+                 </div>
+                 
+                 <div className="space-y-8">
+                   {Object.entries(batchWiseReport)
+                     .filter(([key]) => reportBatchFilter === 'ALL' || key === reportBatchFilter)
+                     .sort((a, b) => a[1].batchName.localeCompare(b[1].batchName) || a[1].subject.localeCompare(b[1].subject))
+                     .map(([key, batchData]) => (
+                     <div key={key} className="space-y-4">
+                       <div className="flex justify-between items-end border-b border-white/10 pb-2">
+                         <div>
+                           <div className="flex items-center gap-3">
+                             <h4 className="font-black text-[var(--primary)] text-lg">{batchData.batchName}</h4>
+                             {batchData.subject !== 'ALL' && (
+                               <span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-400 rounded text-xs font-black uppercase tracking-widest">{batchData.subject}</span>
+                             )}
+                           </div>
+                           <div className="text-xs opacity-60 font-bold uppercase tracking-wider">{batchData.totalClasses} Total Classes Recorded</div>
+                         </div>
+                       </div>
+                       <div className="overflow-x-auto">
+                         <table className="w-full text-left">
+                           <thead className="text-[10px] font-black uppercase opacity-40 bg-white/5">
+                             <tr>
+                               <th className="p-3">Student</th>
+                               <th className="p-3 text-center">Present</th>
+                               <th className="p-3 text-center">Absent</th>
+                               <th className="p-3 text-center">Percentage</th>
+                               <th className="p-3 text-center">Actions</th>
+                             </tr>
+                           </thead>
+                           <tbody className="divide-y divide-white/5 text-sm">
+                             {Object.entries(batchData.students).map(([studentId, s]) => {
+                               const total = s.present + s.absent;
+                               const percent = total > 0 ? Math.round((s.present / total) * 100) : 0;
+                               return (
+                                 <tr key={studentId} className="hover:bg-white/5 transition-colors">
+                                   <td className="p-3">
+                                     <div className="font-bold">{s.name}</div>
+                                     <div className="text-[10px] opacity-40">{s.email || studentId}</div>
+                                   </td>
+                                   <td className="p-3 text-center font-black text-green-500">{s.present}</td>
+                                   <td className="p-3 text-center font-black text-red-500">{s.absent}</td>
+                                   <td className="p-3 text-center">
+                                     <span className={`px-2 py-1 rounded-full text-[10px] font-black ${percent >= 75 ? 'bg-green-500/20 text-green-500' : percent >= 50 ? 'bg-amber-500/20 text-amber-500' : 'bg-red-500/20 text-red-500'}`}>
+                                       {percent}%
+                                     </span>
+                                   </td>
+                                   <td className="p-3 text-center">
+                                     <a 
+                                       href={`https://wa.me/${s.whatsapp}?text=${encodeURIComponent(messagingConfig.template.replace('{name}', s.name).replace('{status}', 'checked').replace('{date}', new Date().toLocaleDateString()).replace('{batch}', batchData.batchName))}`}
+                                       target="_blank" rel="noopener noreferrer"
+                                       className="inline-flex items-center justify-center p-2 bg-green-500/10 text-green-500 rounded-lg hover:bg-green-500/20 transition-all"
+                                       title="Message on WhatsApp"
+                                     >
+                                       <MessageSquare size={14} />
+                                     </a>
+                                   </td>
+                                 </tr>
+                               );
+                             })}
+                             {Object.keys(batchData.students).length === 0 && (
+                               <tr><td colSpan={5} className="p-8 text-center opacity-40 italic">No students enrolled in this batch.</td></tr>
+                             )}
+                           </tbody>
+                         </table>
+                       </div>
+                     </div>
+                   ))}
+                   
+                   {Object.keys(batchWiseReport).length === 0 && (
+                     <div className="p-10 text-center opacity-40 italic font-bold">No batches available.</div>
+                   )}
+                 </div>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>

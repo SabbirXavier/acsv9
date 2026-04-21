@@ -205,6 +205,50 @@ export default function AdminBrandingDashboard() {
             </div>
 
             <div className="space-y-4 pt-4 border-t border-gray-100 dark:border-white/5">
+              <h4 className="text-xs font-black uppercase tracking-widest text-gray-400">Contact Details</h4>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-bold flex items-center gap-2">
+                    Email Address
+                  </label>
+                  <input 
+                    type="email"
+                    value={config.contactEmail || ''}
+                    onChange={e => setConfig({ ...config, contactEmail: e.target.value })}
+                    className="w-full p-3 bg-gray-100 dark:bg-white/5 border border-transparent focus:border-[var(--primary)] rounded-xl outline-none transition-all text-sm"
+                    placeholder="support@advancedclasses.com"
+                  />
+                </div>
+                
+                <div className="space-y-2">
+                  <label className="text-sm font-bold flex items-center gap-2">
+                    Phone Number
+                  </label>
+                  <input 
+                    type="tel"
+                    value={config.contactPhone || ''}
+                    onChange={e => setConfig({ ...config, contactPhone: e.target.value })}
+                    className="w-full p-3 bg-gray-100 dark:bg-white/5 border border-transparent focus:border-[var(--primary)] rounded-xl outline-none transition-all text-sm"
+                    placeholder="+91 9876543210"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-bold flex items-center gap-2">
+                  Physical Address
+                </label>
+                <textarea 
+                  value={config.contactAddress || ''}
+                  onChange={e => setConfig({ ...config, contactAddress: e.target.value })}
+                  className="w-full p-3 bg-gray-100 dark:bg-white/5 border border-transparent focus:border-[var(--primary)] rounded-xl outline-none transition-all text-sm min-h-[80px]"
+                  placeholder="123 Education Hub, City Center..."
+                />
+              </div>
+            </div>
+
+            <div className="space-y-4 pt-4 border-t border-gray-100 dark:border-white/5">
               <h4 className="text-xs font-black uppercase tracking-widest text-gray-400">Advanced Analytics</h4>
               
               <div className="space-y-2">

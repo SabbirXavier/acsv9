@@ -58,18 +58,29 @@ export default function MarkdownRenderer({ content, className = '', inline = fal
   // Auto-LaTeX: wrap common math patterns in $ if they aren't already
   const processedContent = React.useMemo(() => {
     if (!content) return '';
-    // Detect patterns like \frac, \sqrt, x^2, etc. that aren't wrapped in $
+    
     let text = content;
+
+    // Convert \[ ... \] to $$ ... $$ for block math
+    text = text.replace(/\\\[([\s\S]*?)\\\]/g, '$$$$$1$$$$');
+    // Convert \( ... \) to $ ... $ for inline math
+    text = text.replace(/\\\(([\s\S]*?)\\\)/g, '$$$1$$');
+    
+    // Add support for [latex]...[/latex] and <latex>...</latex> tags
+    text = text.replace(/\[latex\]([\s\S]*?)\[\/latex\]/gi, '$$$$$1$$$$');
+    text = text.replace(/<latex>([\s\S]*?)<\/latex>/gi, '$$$$$1$$$$');
     
     // Heuristic: if it looks like LaTeX but lacks $, wrap it.
     const mathKeywords = /\\(frac|sqrt|sum|prod|lim|int|pm|times|div|cup|cap|subset|subseteq|in|notin|deg|sin|cos|tan|log|ln|text)/g;
     
-    if (mathKeywords.test(text) && !text.includes('$')) {
-      return `$${text}$`;
-    }
-    
-    if (text.includes('^') && !text.includes('$') && text.length < 50) {
-       return `$${text}$`;
+    // Quick check if text doesn't contain standard math delimiters
+    if (!text.includes('$') && !text.includes('$$')) {
+      if (mathKeywords.test(text)) {
+        return `$${text}$`;
+      }
+      if (text.includes('^') && text.length < 50) {
+         return `$${text}$`;
+      }
     }
 
     return text;

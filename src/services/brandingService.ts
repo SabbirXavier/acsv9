@@ -16,6 +16,9 @@ export interface BrandingConfig {
   metaPixelCode?: string;
   googleAnalyticsCode?: string;
   navOrder?: string[];
+  contactEmail?: string;
+  contactPhone?: string;
+  contactAddress?: string;
   updatedAt: any;
 }
 
@@ -27,6 +30,9 @@ const DEFAULT_BRANDING: BrandingConfig = {
   starTitle: 'STAR OF THE WEEK',
   metaPixelCode: '',
   googleAnalyticsCode: '',
+  contactEmail: 'support@advancedclasses.com',
+  contactPhone: '+91 9876543210',
+  contactAddress: '123 Education Hub, Knowledge Park, City Center - 400001, India',
   navOrder: ['home', 'exclusive', 'batches', 'routine', 'test', 'downloads', 'studyhub', 'fee', 'join', 'settings'],
   updatedAt: null
 };

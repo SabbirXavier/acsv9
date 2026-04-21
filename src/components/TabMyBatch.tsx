@@ -323,7 +323,7 @@ const TabMyBatch: React.FC<TabMyBatchProps> = ({ userEnrollment, user, facultyBa
 
       {viewMode === 'attendance' && (
         <div className="space-y-6">
-          <AttendanceModule user={user} isAdmin={isUserAdmin} isFaculty={isUserFaculty} facultyBatches={facultyBatches} />
+          <AttendanceModule user={user} isAdmin={isUserAdmin} isFaculty={isUserFaculty} facultyBatches={facultyBatches} source="mybatch" />
         </div>
       )}
 

@@ -22,6 +22,10 @@ import {
 import { landingService, LandingConfig, Achiever, Faculty } from '../services/landingService';
 import { brandingService, BrandingConfig } from '../services/brandingService';
 
+import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
+import { db } from '../firebase';
+import toast from 'react-hot-toast';
+
 const ICON_MAP: Record<string, any> = {
   Zap, Brain, Radio, MessageSquare, Star, GraduationCap, BookOpen, Clock, Target, Users, Trophy, UserCheck, ShieldCheck
 };
@@ -33,6 +37,15 @@ export default function LandingPage() {
   const [branding, setBranding] = useState<BrandingConfig | null>(null);
   const [expandedFaculty, setExpandedFaculty] = useState<Record<string, boolean>>({});
   const [zoomedFaculty, setZoomedFaculty] = useState<Faculty | null>(null);
+  const [legalModal, setLegalModal] = useState<string | null>(null);
+  const [showLeadForm, setShowLeadForm] = useState(false);
+  const [isSubmittingLead, setIsSubmittingLead] = useState(false);
+  const [leadFormData, setLeadFormData] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    course: ''
+  });
 
   useEffect(() => {
     const unsubConfig = landingService.listenToConfig(setConfig);
@@ -48,7 +61,32 @@ export default function LandingPage() {
   }, []);
 
   const handleCTA = () => {
-    window.dispatchEvent(new CustomEvent('open-enrollment'));
+    setShowLeadForm(true);
+  };
+
+  const submitLeadForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!leadFormData.name || !leadFormData.phone) {
+      toast.error("Name and Phone are required.");
+      return;
+    }
+    
+    setIsSubmittingLead(true);
+    const toastId = toast.loading('Submitting your details...');
+    try {
+      await addDoc(collection(db, 'leads'), {
+        ...leadFormData,
+        createdAt: serverTimestamp(),
+        source: 'landing_page',
+        status: 'new'
+      });
+      toast.success('Thank you! Our team will contact you shortly.', { id: toastId });
+      setShowLeadForm(false);
+      setLeadFormData({ name: '', phone: '', email: '', course: '' });
+    } catch (err) {
+      toast.error('Failed to submit. Please try again.', { id: toastId });
+    }
+    setIsSubmittingLead(false);
   };
 
   if (!config) return null;
@@ -392,6 +430,227 @@ export default function LandingPage() {
               >
                 <X size={32} />
               </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <footer className="border-t border-white/10 bg-[#050505] pt-16 pb-8 px-6 mt-20 relative z-10">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-12 mb-16">
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Star className="text-[var(--primary)] fill-[var(--primary)]" size={24} />
+              <span className="text-xl font-black uppercase italic tracking-tight">{branding?.title || 'Advanced Classes'}</span>
+            </div>
+            <p className="text-sm text-gray-400 leading-relaxed max-w-sm">
+              Empowering students with premium educational resources, interactive live classes, and data-driven performance tracking to ensure academic excellence.
+            </p>
+          </div>
+          
+          <div>
+            <h4 className="text-sm font-bold uppercase tracking-widest text-gray-500 mb-4">Contact Us</h4>
+            <ul className="space-y-3 text-sm text-gray-300">
+              <li className="flex gap-2"><span className="text-[var(--primary)] font-bold">Email:</span> {branding?.contactEmail || import.meta.env.VITE_ADMIN_EMAIL || 'support@advancedclasses.com'}</li>
+              <li className="flex gap-2"><span className="text-[var(--primary)] font-bold">Phone:</span> {branding?.contactPhone || '+91 9876543210'}</li>
+              <li className="flex gap-2"><span className="text-[var(--primary)] font-bold">Address:</span> {branding?.contactAddress || '123 Education Hub, Knowledge Park, City Center - 400001, India'}</li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-bold uppercase tracking-widest text-gray-500 mb-4">Legal</h4>
+            <ul className="space-y-3 text-sm">
+              <li><button onClick={() => setLegalModal('privacy')} className="text-gray-400 hover:text-[var(--primary)] transition-colors">Privacy Policy</button></li>
+              <li><button onClick={() => setLegalModal('terms')} className="text-gray-400 hover:text-[var(--primary)] transition-colors">Terms of Service</button></li>
+              <li><button onClick={() => setLegalModal('refund')} className="text-gray-400 hover:text-[var(--primary)] transition-colors">Refund & Cancellation</button></li>
+              <li><button onClick={() => setLegalModal('about')} className="text-gray-400 hover:text-[var(--primary)] transition-colors">About Us</button></li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-bold uppercase tracking-widest text-gray-500 mb-4">Quick Links</h4>
+            <ul className="space-y-3 text-sm text-gray-400">
+              <li><button onClick={handleCTA} className="hover:text-white transition-colors">Student Login / Register</button></li>
+              <li><button onClick={handleCTA} className="hover:text-white transition-colors">Browse Courses</button></li>
+            </ul>
+          </div>
+        </div>
+        
+        <div className="max-w-7xl mx-auto border-t border-white/10 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-xs text-gray-600 font-bold uppercase tracking-wider">
+          <div>© {new Date().getFullYear()} {branding?.title || 'Advanced Classes'}. All rights reserved.</div>
+          <div className="flex gap-4">
+            <span>Operated strictly in accordance with local regulations</span>
+          </div>
+        </div>
+        <div className="max-w-7xl mx-auto mt-6 pt-6 border-t border-white/5 text-[10px] text-gray-500 text-center leading-relaxed max-w-4xl">
+          <strong>Disclaimer:</strong> This platform provides coaching, supplementary material, and educational resources. Results may vary depending on individual effort and dedication. We are not officially affiliated with any government examination boards or institutions unless explicitly stated. Any performance claims are based on specific top performers and do not guarantee future success for all users.
+        </div>
+      </footer>
+
+      {/* Lead Generation Form Modal */}
+      <AnimatePresence>
+        {showLeadForm && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[3000] bg-black/90 backdrop-blur-xl flex items-center justify-center p-4 sm:p-6"
+            onClick={() => setShowLeadForm(false)}
+          >
+            <motion.div 
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="relative max-w-md w-full bg-[#111] border border-[var(--primary)]/30 rounded-3xl p-6 sm:p-8"
+              onClick={e => e.stopPropagation()}
+            >
+              <button 
+                onClick={() => setShowLeadForm(false)}
+                className="absolute top-4 right-4 p-2 text-white/50 hover:text-white bg-white/5 rounded-full transition-colors"
+              >
+                <X size={20} />
+              </button>
+
+              <div className="text-center mb-6">
+                <div className="w-12 h-12 bg-[var(--primary)]/20 text-[var(--primary)] rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Star size={24} className="fill-[var(--primary)]" />
+                </div>
+                <h3 className="text-2xl font-black uppercase italic text-white tracking-tight">Request Info</h3>
+                <p className="text-sm text-gray-400 mt-2 font-medium">Fill out the form below and our expert counselors will get back to you.</p>
+              </div>
+
+              <form onSubmit={submitLeadForm} className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-wider text-gray-400 mb-1 block">Full Name *</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={leadFormData.name}
+                    onChange={(e) => setLeadFormData({...leadFormData, name: e.target.value})}
+                    className="w-full p-3 bg-white/5 border border-white/10 rounded-xl text-sm font-medium focus:outline-none focus:border-[var(--primary)]/50 transition-all placeholder:text-gray-600"
+                    placeholder="Enter your full name"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-wider text-gray-400 mb-1 block">Phone / WhatsApp *</label>
+                  <input 
+                    type="tel" 
+                    required
+                    value={leadFormData.phone}
+                    onChange={(e) => setLeadFormData({...leadFormData, phone: e.target.value})}
+                    className="w-full p-3 bg-white/5 border border-white/10 rounded-xl text-sm font-medium focus:outline-none focus:border-[var(--primary)]/50 transition-all placeholder:text-gray-600"
+                    placeholder="Enter your mobile number"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-wider text-gray-400 mb-1 block">Email (Optional)</label>
+                  <input 
+                    type="email" 
+                    value={leadFormData.email}
+                    onChange={(e) => setLeadFormData({...leadFormData, email: e.target.value})}
+                    className="w-full p-3 bg-white/5 border border-white/10 rounded-xl text-sm font-medium focus:outline-none focus:border-[var(--primary)]/50 transition-all placeholder:text-gray-600"
+                    placeholder="Enter your email address"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black uppercase tracking-wider text-gray-400 mb-1 block">Course Interested In</label>
+                  <input 
+                    type="text" 
+                    value={leadFormData.course}
+                    onChange={(e) => setLeadFormData({...leadFormData, course: e.target.value})}
+                    className="w-full p-3 bg-white/5 border border-white/10 rounded-xl text-sm font-medium focus:outline-none focus:border-[var(--primary)]/50 transition-all placeholder:text-gray-600"
+                    placeholder="E.g. Class 12 Boards, NEET, JEE"
+                  />
+                </div>
+                
+                <button 
+                  type="submit"
+                  disabled={isSubmittingLead}
+                  className="w-full mt-4 px-6 py-4 bg-[var(--primary)] text-white rounded-xl font-black text-sm uppercase tracking-wider shadow-xl shadow-[var(--primary)]/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSubmittingLead ? 'Submitting...' : 'Send Inquiry'}
+                </button>
+                <div className="text-center mt-4 text-[10px] text-gray-500">
+                  By submitting, you agree to our <button type="button" onClick={() => {setShowLeadForm(false); setLegalModal('terms');}} className="text-[var(--primary)] underline hover:text-white">Terms</button> & <button type="button" onClick={() => {setShowLeadForm(false); setLegalModal('privacy');}} className="text-[var(--primary)] underline hover:text-white">Privacy Policy</button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Legal Modal */}
+      <AnimatePresence>
+        {legalModal && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[2000] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6"
+            onClick={() => setLegalModal(null)}
+          >
+            <motion.div 
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+              className="relative max-w-3xl w-full max-h-[85vh] bg-[#111] border border-white/10 rounded-3xl p-6 sm:p-10 overflow-y-auto custom-scrollbar"
+              onClick={e => e.stopPropagation()}
+            >
+              <button 
+                onClick={() => setLegalModal(null)}
+                className="sticky top-0 float-right p-2 text-white/50 hover:text-white bg-black/50 backdrop-blur-md rounded-full transition-colors z-10"
+              >
+                <X size={24} />
+              </button>
+              
+              <div className="prose prose-invert prose-sm sm:prose-base max-w-none clear-both">
+                {legalModal === 'privacy' && (
+                  <>
+                    <h2 className="text-2xl font-black text-[var(--primary)] uppercase tracking-tight mb-6">Privacy Policy</h2>
+                    <p>Last updated: {new Date().toLocaleDateString()}</p>
+                    <p>This Privacy Policy describes Our policies and procedures on the collection, use and disclosure of Your information when You use the Service and tells You about Your privacy rights and how the law protects You.</p>
+                    <h3>Information Collection and Use</h3>
+                    <p>We collect several different types of information for various purposes to provide and improve our Service to you. This includes Personal Data (like email address, first name and last name, phone number) and Usage Data depending on your interaction with our platform.</p>
+                    <h3>Data Security</h3>
+                    <p>The security of your data is important to us, but remember that no method of transmission over the Internet, or method of electronic storage is 100% secure. We strive to use commercially acceptable means to protect your Personal Data.</p>
+                    <h3>Contact Us</h3>
+                    <p>If you have any questions about this Privacy Policy, You can contact us securely at {branding?.contactEmail || import.meta.env.VITE_ADMIN_EMAIL || 'support@advancedclasses.com'} or {branding?.contactPhone || '+91 9876543210'}.</p>
+                  </>
+                )}
+                {legalModal === 'terms' && (
+                  <>
+                    <h2 className="text-2xl font-black text-[var(--primary)] uppercase tracking-tight mb-6">Terms of Service</h2>
+                    <p>Please read these terms and conditions carefully before using Our Service.</p>
+                    <h3>Acknowledgment</h3>
+                    <p>These are the Terms and Conditions governing the use of this Service and the agreement that operates between You and the Company. These Terms and Conditions set out the rights and obligations of all users regarding the use of the Service.</p>
+                    <h3>User Accounts</h3>
+                    <p>When You create an account with Us, You must provide Us information that is accurate, complete, and current at all times. Failure to do so constitutes a breach of the Terms, which may result in immediate termination of Your account on Our Service.</p>
+                    <h3>Termination</h3>
+                    <p>We may terminate or suspend Your account immediately, without prior notice or liability, for any reason whatsoever, including without limitation if You breach these Terms and Conditions.</p>
+                  </>
+                )}
+                {legalModal === 'refund' && (
+                  <>
+                    <h2 className="text-2xl font-black text-[var(--primary)] uppercase tracking-tight mb-6">Refund & Cancellation Policy</h2>
+                    <p>Thank you for choosing {branding?.title || 'Advanced Classes'}.</p>
+                    <h3>Cancellation</h3>
+                    <p>You may request to cancel your enrollment within 7 days of initial purchase. If you cancel within this period, your access to the platform will be immediately revoked.</p>
+                    <h3>Refunds</h3>
+                    <p>Refunds are processed within 5-7 business days of an approved cancellation request. Partial refunds may be granted if course materials have already been downloaded or accessed extensively. Please contact support at {branding?.contactEmail || import.meta.env.VITE_ADMIN_EMAIL || 'support@advancedclasses.com'} to initiate a refund request.</p>
+                  </>
+                )}
+                {legalModal === 'about' && (
+                  <>
+                    <h2 className="text-2xl font-black text-[var(--primary)] uppercase tracking-tight mb-6">About Us</h2>
+                    <p>We are a dedicated educational platform committed to bridging the gap between ambition and academic excellence.</p>
+                    <h3>Our Mission</h3>
+                    <p>To provide high-quality, accessible, and comprehensive learning materials through an interactive, digital-first environment.</p>
+                    <h3>Our Team</h3>
+                    <p>Our educators are highly vetted professionals with years of competitive and academic expertise. We strive to offer an unparalleled learning experience completely centered around student success and growth.</p>
+                    <h3>Our Location</h3>
+                    <p>{branding?.contactAddress || '123 Education Hub, Knowledge Park, City Center - 400001, India'}</p>
+                  </>
+                )}
+              </div>
             </motion.div>
           </motion.div>
         )}
