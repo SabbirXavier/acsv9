@@ -75,10 +75,16 @@ export default function FinanceModule() {
     end: new Date().toISOString().split('T')[0]
   });
 
+  const [financeLedgers, setFinanceLedgers] = useState<any[]>([]);
+
   useEffect(() => {
     const unsubFinances = firestoreService.listenToCollection('finances', (data) => {
       setFinances(data.sort((a, b) => b.date.seconds - a.date.seconds));
       setLoading(false);
+    });
+
+    const unsubLedger = firestoreService.listenToCollection('finance_ledger', (data) => {
+      setFinanceLedgers(data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
     });
 
     const unsubEnrollments = firestoreService.listenToCollection('enrollments', (data) => {
@@ -91,6 +97,7 @@ export default function FinanceModule() {
 
     return () => {
       unsubFinances();
+      unsubLedger();
       unsubEnrollments();
       unsubUsers();
     };
@@ -261,7 +268,7 @@ export default function FinanceModule() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 p-1 bg-gray-100 dark:bg-white/5 rounded-2xl w-fit">
+      <div className="flex gap-2 p-1 bg-gray-100 dark:bg-white/5 rounded-2xl w-fit flex-wrap">
         <button 
           onClick={() => setActiveView('overview')}
           className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeView === 'overview' ? 'bg-white dark:bg-[#1e1e1e] text-[var(--primary)] shadow-sm' : 'text-gray-500'}`}
@@ -272,23 +279,91 @@ export default function FinanceModule() {
           onClick={() => setActiveView('ledger')}
           className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeView === 'ledger' ? 'bg-white dark:bg-[#1e1e1e] text-[var(--primary)] shadow-sm' : 'text-gray-500'}`}
         >
-          Day Book / Ledger
+          Day Book
+        </button>
+        <button 
+          onClick={() => setActiveView('splits' as any)}
+          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeView === 'splits' as any ? 'bg-white dark:bg-[#1e1e1e] text-[var(--primary)] shadow-sm' : 'text-gray-500'}`}
+        >
+          Splits Ledger (Payroll)
         </button>
         <button 
           onClick={() => setActiveView('fees')}
           className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeView === 'fees' ? 'bg-white dark:bg-[#1e1e1e] text-[var(--primary)] shadow-sm' : 'text-gray-500'}`}
         >
-          Enrolled Student Monthly Report
+          Student Fees
         </button>
         <button 
           onClick={() => setActiveView('pending')}
           className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${activeView === 'pending' ? 'bg-white dark:bg-[#1e1e1e] text-[var(--primary)] shadow-sm' : 'text-gray-500'}`}
         >
-          Pending Payments {pendingPayments.length > 0 && <span className="ml-1 px-1.5 py-0.5 bg-red-500 text-white rounded-full text-[8px]">{pendingPayments.length}</span>}
+          Pending {pendingPayments.length > 0 && <span className="ml-1 px-1.5 py-0.5 bg-red-500 text-white rounded-full text-[8px]">{pendingPayments.length}</span>}
         </button>
       </div>
 
       <AnimatePresence mode="wait">
+        {activeView === 'splits' as any && (
+          <motion.div 
+            key="splits"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="glass-card overflow-hidden"
+          >
+            <div className="p-4 border-b border-white/10">
+              <h3 className="font-bold flex items-center gap-2">
+                <Wallet size={18} /> SPLIT LEDGER LOGS
+              </h3>
+              <p className="text-xs opacity-60 mt-1">Detailed log of 50-50 automatic fee splits (Admin vs Faculty).</p>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-gray-100 dark:bg-white/5">
+                  <tr>
+                    <th className="p-4 text-[10px] font-black uppercase tracking-widest opacity-50">Date</th>
+                    <th className="p-4 text-[10px] font-black uppercase tracking-widest opacity-50">Student Info</th>
+                    <th className="p-4 text-[10px] font-black uppercase tracking-widest opacity-50 text-right">Amount Paid</th>
+                    <th className="p-4 text-[10px] font-black uppercase tracking-widest opacity-50 text-right">Admin Cut (50%)</th>
+                    <th className="p-4 text-[10px] font-black uppercase tracking-widest opacity-50 text-right">Faculty Pool (50%)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                  {financeLedgers.map(log => (
+                    <tr key={log.id} className="hover:bg-gray-50/50 dark:hover:bg-white/5 transition-colors">
+                      <td className="p-4 text-xs font-medium whitespace-nowrap">
+                        {new Date(log.date).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'})}
+                      </td>
+                      <td className="p-4">
+                        <div className="text-sm font-bold">{log.studentName}</div>
+                        <div className="flex gap-1 mt-1">
+                          {(log.subjects || []).map((s: string) => (
+                            <span key={s} className="px-1.5 py-0.5 bg-[var(--primary)]/10 text-[var(--primary)] text-[8px] rounded font-bold uppercase">{s}</span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="p-4 text-sm font-black text-right">
+                        ₹{log.amountPaid?.toLocaleString()}
+                      </td>
+                      <td className="p-4 text-sm font-black text-right text-indigo-500">
+                        ₹{log.adminCut?.toLocaleString()}
+                      </td>
+                      <td className="p-4 text-sm font-black text-right text-emerald-500">
+                        ₹{log.facultyCut?.toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                  {financeLedgers.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-12 text-center opacity-30 italic font-medium">
+                        No split ledger records found. Standard payments directly add income. Full logic is configured in Enrollments.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </motion.div>
+        )}
         {activeView === 'overview' && (
           <motion.div 
             key="overview"

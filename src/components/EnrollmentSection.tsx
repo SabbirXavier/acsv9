@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Link as LinkIcon, AlertCircle, CheckCircle, UserPlus, X, Settings, Edit, Trash2, Check, FileText, Lock, Download, FileUp } from 'lucide-react';
+import { Plus, Link as LinkIcon, AlertCircle, CheckCircle, UserPlus, X, Settings, Edit, Trash2, Check, FileText, Lock, Download, FileUp, DollarSign } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import toast, { Toaster } from 'react-hot-toast';
 import { firestoreService } from '../services/firestoreService';
@@ -26,6 +26,43 @@ export default function EnrollmentSection() {
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [isEditingAdmin, setIsEditingAdmin] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+
+  const handleLogPayment = async () => {
+    if (!selectedStudent || !paymentAmount) return;
+    const amount = Number(paymentAmount);
+    if (isNaN(amount) || amount <= 0) return toast.error('Enter a valid amount');
+    
+    // 50-50 Split
+    const adminCut = amount / 2;
+    const facultyCut = amount / 2;
+    
+    try {
+      await firestoreService.addItem('finance_ledger', {
+        date: new Date().toISOString(),
+        studentId: selectedStudent.id,
+        studentName: selectedStudent.name,
+        amountPaid: amount,
+        adminCut,
+        facultyCut,
+        subjects: selectedStudent.subjects || []
+      });
+      
+      const newTotal = (selectedStudent as any).totalPaid ? (selectedStudent as any).totalPaid + amount : amount;
+      await firestoreService.updateItem('enrollments', selectedStudent.id, {
+        feeStatus: 'Paid',
+        totalPaid: newTotal
+      });
+      
+      toast.success('Payment logged & splits calculated!');
+      setShowPaymentModal(false);
+      setPaymentAmount('');
+      
+    } catch (error) {
+      toast.error('Failed to log payment');
+    }
+  };
   
   useEffect(() => {
     const unsubEnrollments = firestoreService.listenToCollection('enrollments', setEnrollments);
@@ -337,12 +374,15 @@ export default function EnrollmentSection() {
                       <div className={`font-bold ${selectedStudent.feeStatus === 'Paid' ? 'text-[var(--success)]' : 'text-yellow-500'}`}>
                         {selectedStudent.feeStatus}
                       </div>
+                      {(selectedStudent as any).totalPaid && (
+                        <div className="text-xs opacity-60 mt-0.5">Paid: ₹{(selectedStudent as any).totalPaid}</div>
+                      )}
                     </div>
                     <button 
-                      onClick={() => handleAdminUpdate(selectedStudent.id, { feeStatus: selectedStudent.feeStatus === 'Paid' ? 'Pending' : 'Paid' })}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold ${selectedStudent.feeStatus === 'Paid' ? 'bg-yellow-500/20 text-yellow-600' : 'bg-[var(--success)]/20 text-[var(--success)]'}`}
+                      onClick={() => setShowPaymentModal(true)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold bg-[var(--success)]/20 text-[var(--success)] hover:bg-[var(--success)]/30 flex items-center gap-1.5 transition-all`}
                     >
-                      Mark as {selectedStudent.feeStatus === 'Paid' ? 'Pending' : 'Paid'}
+                      <DollarSign size={14} /> Log Custom Payment
                     </button>
                   </div>
 
@@ -379,6 +419,58 @@ export default function EnrollmentSection() {
                 </>
               )}
             </div>
+            
+            {/* Custom Payment Modal Overlay */}
+            {showPaymentModal && (
+              <div className="absolute inset-0 z-50 bg-gray-900 rounded-[var(--radius)] p-6 flex flex-col justify-center animate-in fade-in zoom-in duration-200">
+                <h3 className="text-xl font-bold mb-2 flex items-center gap-2 text-[var(--success)]">
+                  <DollarSign /> Log Custom Payment
+                </h3>
+                <p className="text-xs opacity-70 mb-4">Enter payment amount. The system will automatically split this 50-50 between Admin Revenue and Faculty Pool.</p>
+                
+                <div className="space-y-4">
+                  <div>
+                     <label className="text-xs font-bold opacity-70 mb-1 block">Amount Received (₹)</label>
+                     <input 
+                       type="number" 
+                       placeholder="e.g. 1500"
+                       value={paymentAmount}
+                       onChange={e => setPaymentAmount(e.target.value)}
+                       className="w-full p-3 rounded-xl bg-white/10 border border-[var(--success)]/30 outline-none focus:border-[var(--success)] text-lg font-mono font-bold" 
+                     />
+                  </div>
+                  
+                  {paymentAmount && !isNaN(Number(paymentAmount)) && Number(paymentAmount) > 0 && (
+                    <div className="p-4 bg-[var(--success)]/10 border border-[var(--success)]/20 rounded-xl text-sm border-dashed">
+                      <div className="flex justify-between items-center mb-1">
+                        <span className="opacity-70 font-bold">Admin Cut (50%)</span>
+                        <span className="font-mono text-[var(--success)] font-black">₹{Number(paymentAmount) / 2}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="opacity-70 font-bold">Faculty Pool (50%)</span>
+                        <span className="font-mono text-[var(--success)] font-black">₹{Number(paymentAmount) / 2}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2 mt-4">
+                    <button 
+                      onClick={handleLogPayment}
+                      className="flex-1 py-3 bg-[var(--success)] text-white hover:bg-[var(--success)]/90 rounded-xl text-sm font-black shadow-lg shadow-[var(--success)]/20"
+                    >
+                      Confirm Split & Log
+                    </button>
+                    <button 
+                      onClick={() => setShowPaymentModal(false)}
+                      className="px-4 py-3 bg-white/10 hover:bg-white/20 rounded-xl text-sm font-bold"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
           </div>
         </div>
       )}

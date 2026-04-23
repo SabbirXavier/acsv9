@@ -1678,7 +1678,8 @@ export default function TabAdmin({ branding }: { branding?: any }) {
                   </thead>
                   <tbody>
                     {enrollments.map(student => {
-                      const pendingPayments = student.paymentHistory?.filter((p: any) => p.status === 'pending') || [];
+                      const pendingPayments = (student.paymentHistory?.filter((p: any) => p.status === 'pending') || [])
+                        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime());
                       return (
                         <tr key={student.id} className="border-b border-[var(--border-color)] hover:bg-white/5 transition-colors">
                           <td className="p-3">
@@ -2681,7 +2682,7 @@ export default function TabAdmin({ branding }: { branding?: any }) {
                 >
                   <RefreshCw size={14} /> Sync Now
                 </button>
-                <button onClick={() => openAddModal('radars', { title: '', startTime: '09:00 AM', endTime: '10:00 AM', link: '', status: 'upcoming', notes: '', type: 'text', fileUrl: '', externalUrl: '', date: getKolkataTime().toDateString() })} className="px-3 py-1.5 bg-[var(--primary)] text-white rounded-lg text-xs font-bold hover:opacity-90 active:scale-95 transition-all shadow-lg shadow-[var(--primary)]/20">+ Add Manual Class</button>
+                <button onClick={() => openAddModal('radars', { title: '', startTime: '09:00 AM', endTime: '10:00 AM', link: '', status: 'upcoming', notes: '', instagramProfile: '', type: 'text', fileUrl: '', externalUrl: '', date: getKolkataTime().toDateString() })} className="px-3 py-1.5 bg-[var(--primary)] text-white rounded-lg text-xs font-bold hover:opacity-90 active:scale-95 transition-all shadow-lg shadow-[var(--primary)]/20">+ Add Manual Class</button>
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2734,6 +2735,7 @@ export default function TabAdmin({ branding }: { branding?: any }) {
                   </div>
 
                   <textarea className="w-full p-2 bg-white/5 border border-[var(--border-color)] rounded text-sm" value={radar.notes || ''} onChange={e => setRadars(radars.map(r => r.id === radar.id ? {...r, notes: e.target.value} : r))} placeholder="Teacher's Note (e.g. Bring your lab manual)" />
+                  <input className="w-full p-2 bg-white/5 border border-[var(--border-color)] rounded text-sm" value={radar.instagramProfile || ''} onChange={e => setRadars(radars.map(r => r.id === radar.id ? {...r, instagramProfile: e.target.value} : r))} placeholder="Teacher's Instagram Username / URL" />
                   <div className="flex gap-2">
                     <button onClick={() => updateItem('radars', radar.id, radar)} className="flex-1 px-4 py-2 bg-[var(--success)] text-white rounded-lg text-sm font-bold hover:opacity-90 active:scale-95 transition-all">Save Radar Changes</button>
                     <button onClick={() => deleteItem('radars', radar.id)} className="px-4 py-2 bg-[var(--danger)] text-white rounded-lg text-sm font-bold hover:opacity-90 active:scale-95 transition-all">Delete</button>
@@ -3085,12 +3087,25 @@ export default function TabAdmin({ branding }: { branding?: any }) {
             <div className="space-y-4">
               <p><strong>Student:</strong> {verifyingPayment.student.name}</p>
               <p><strong>Amount:</strong> ₹{verifyingPayment.payment.amount}</p>
-              <img src={verifyingPayment.payment.screenshot} alt="Screenshot" className="w-full rounded-lg border border-[var(--border-color)]" />
+              {verifyingPayment.payment.screenshot || verifyingPayment.payment.screenshotUrl ? (
+                <img src={verifyingPayment.payment.screenshot || verifyingPayment.payment.screenshotUrl} alt="Screenshot" className="w-full rounded-lg border border-[var(--border-color)]" />
+              ) : (
+                <div className="p-4 bg-white/5 border border-white/10 rounded-lg text-center opacity-60 text-sm">No screenshot provided</div>
+              )}
+              
+              {verifyingPayment.payment.transactionId && (
+                <p className="text-sm"><strong>Transaction ID:</strong> <span className="font-mono bg-white/10 px-2 py-0.5 rounded">{verifyingPayment.payment.transactionId}</span></p>
+              )}
+              {verifyingPayment.payment.notes && (
+                <p className="text-sm"><strong>Notes:</strong> {verifyingPayment.payment.notes}</p>
+              )}
               
               <div className="flex gap-2 mt-4">
                 <button onClick={() => {
                   const updatedStudent = { ...verifyingPayment.student };
-                  updatedStudent.paymentHistory = updatedStudent.paymentHistory.map((p: any) => p.id === verifyingPayment.payment.id ? { ...p, status: 'verified' } : p);
+                  updatedStudent.paymentHistory = updatedStudent.paymentHistory.map((p: any) => 
+                     (p.id === verifyingPayment.payment.id || p.date === verifyingPayment.payment.date) ? { ...p, status: 'verified' } : p
+                  );
                   updatedStudent.feeStatus = 'Paid'; // Auto update fee status
                   updatedStudent.expiryDate = updatedStudent.expiryDate || getDefaultExpiryDate(); // Set default expiry on verify
                   updateItem('enrollments', updatedStudent.id, updatedStudent);
@@ -3099,7 +3114,9 @@ export default function TabAdmin({ branding }: { branding?: any }) {
                 
                 <button onClick={() => {
                   const updatedStudent = { ...verifyingPayment.student };
-                  updatedStudent.paymentHistory = updatedStudent.paymentHistory.map((p: any) => p.id === verifyingPayment.payment.id ? { ...p, status: 'rejected' } : p);
+                  updatedStudent.paymentHistory = updatedStudent.paymentHistory.map((p: any) => 
+                     (p.id === verifyingPayment.payment.id || p.date === verifyingPayment.payment.date) ? { ...p, status: 'rejected' } : p
+                  );
                   updateItem('enrollments', updatedStudent.id, updatedStudent);
                   setVerifyingPayment(null);
                 }} className="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg font-bold hover:opacity-90 active:scale-95 transition-all">Reject</button>
@@ -3422,6 +3439,7 @@ export default function TabAdmin({ branding }: { branding?: any }) {
                   </div>
                   <input className="w-full p-3 bg-gray-100 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-gray-900 dark:text-white" value={newItemData.link} onChange={e => setNewItemData({...newItemData, link: e.target.value})} placeholder="Class Link (Optional)" />
                   <textarea className="w-full p-3 bg-gray-100 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-gray-900 dark:text-white min-h-[80px]" value={newItemData.notes} onChange={e => setNewItemData({...newItemData, notes: e.target.value})} placeholder="Teacher's Note (Optional)" />
+                  <input className="w-full p-3 bg-gray-100 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl text-gray-900 dark:text-white" value={newItemData.instagramProfile || ''} onChange={e => setNewItemData({...newItemData, instagramProfile: e.target.value})} placeholder="Teacher's Instagram Username / URL" />
                 </>
               )}
               {modalType === 'teasers' && (

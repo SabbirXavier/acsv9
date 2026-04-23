@@ -50,12 +50,23 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
   const [allEnrollments, setAllEnrollments] = useState<any[]>([]);
   const [reportBatchFilter, setReportBatchFilter] = useState('ALL');
   const [selectedSubject, setSelectedSubject] = useState<string>('ALL');
+  const [showSubmissionModal, setShowSubmissionModal] = useState(false);
+  const [submissionDetails, setSubmissionDetails] = useState<any>(null);
 
   const facultyAssignedSubject = React.useMemo(() => {
     if (isAdmin || !isFaculty || !selectedBatch) return null;
     const fb = facultyBatches?.find(f => f.batchId === selectedBatch.id);
     return fb ? fb.subject : null;
   }, [isAdmin, isFaculty, selectedBatch, facultyBatches]);
+
+  const kolkataNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kolkata' }));
+  const todayDateStr = kolkataNow.toISOString().split('T')[0];
+  const yesterdayDate = new Date(kolkataNow);
+  yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+  const yesterdayDateStr = yesterdayDate.toISOString().split('T')[0];
+
+  const todayFaculty = facultyAttendance.filter(a => a.dateStr === todayDateStr && a.isApproved);
+  const yesterdayFaculty = facultyAttendance.filter(a => a.dateStr === yesterdayDateStr && a.isApproved);
 
   useEffect(() => {
     if (facultyAssignedSubject && facultyAssignedSubject !== 'ALL') {
@@ -162,10 +173,12 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
 
     let unsubStudentAttendance = () => {};
     let unsubEnrollments = () => {};
-    if (isAdmin) {
+    if (isAdmin || isFaculty) {
       unsubStudentAttendance = firestoreService.listenToCollection('attendance', (data) => {
         setStudentAttendance(data.sort((a, b) => b.date?.seconds - a.date?.seconds));
       });
+    }
+    if (isAdmin) {
       unsubEnrollments = firestoreService.listenToCollection('enrollments', (data) => {
         setAllEnrollments(data);
       });
@@ -228,15 +241,65 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
     return Array.from(subs).sort();
   }, [students, facultyAssignedSubject]);
 
+  // Mini calendar logic
+  const recentDays = Array.from({length: 5}, (_, i) => {
+    const d = new Date(kolkataNow);
+    d.setDate(d.getDate() - (4 - i));
+    return d.toISOString().split('T')[0];
+  });
+  
+  const isDateCompleted = (dateStr: string) => {
+    if (!selectedBatch) return false;
+    return studentAttendance.some(a => 
+      a.batchId === selectedBatch.id && 
+      (selectedSubject === 'ALL' || a.subject === selectedSubject) && 
+      a.date && new Date(a.date.seconds * 1000).toISOString().split('T')[0] === dateStr
+    );
+  };
+
   const visibleStudents = React.useMemo(() => {
     if (selectedSubject === 'ALL') return students;
     return students.filter((s: any) => s.subjects && s.subjects.includes(selectedSubject));
   }, [students, selectedSubject]);
 
+  // Sync previous logs based on date
+  useEffect(() => {
+    let existingRecords: Record<string, 'present' | 'absent'> | null = null;
+    
+    if (selectedBatch && studentAttendance.length > 0) {
+      const existingDoc = studentAttendance.find(a => 
+        a.batchId === selectedBatch.id && 
+        (selectedSubject === 'ALL' || a.subject === selectedSubject) && 
+        a.date && new Date(a.date.seconds * 1000).toISOString().split('T')[0] === attendanceDate
+      );
+      if (existingDoc && existingDoc.records) {
+        existingRecords = existingDoc.records;
+      }
+    }
+
+    const defaultRecords: Record<string, 'present' | 'absent'> = {};
+    visibleStudents.forEach((student: any) => {
+      // Respect previously saved records from db if they exist for this specific date
+      if (existingRecords && existingRecords[student.id]) {
+        defaultRecords[student.id] = existingRecords[student.id];
+      } else {
+        defaultRecords[student.id] = 'present';
+      }
+    });
+
+    setAttendanceRecords(defaultRecords);
+  }, [visibleStudents, attendanceDate, selectedBatch, selectedSubject, studentAttendance]);
+
   const handleMarkAttendance = async () => {
     if (!selectedBatch) return;
     const toastId = toast.loading('Saving attendance...');
     try {
+      const existingDoc = studentAttendance.find(a => 
+        a.batchId === selectedBatch.id && 
+        (selectedSubject === 'ALL' || a.subject === selectedSubject) && 
+        a.date && new Date(a.date.seconds * 1000).toISOString().split('T')[0] === attendanceDate
+      );
+
       const record = {
         batchId: selectedBatch.id,
         batchName: selectedBatch.name,
@@ -246,8 +309,24 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
         markedBy: user.email,
         markedAt: serverTimestamp()
       };
-      await addDoc(collection(db, 'attendance'), record);
+
+      if (existingDoc) {
+        await updateDoc(doc(db, 'attendance', existingDoc.id), record);
+      } else {
+        await addDoc(collection(db, 'attendance'), record);
+      }
+      
       toast.success('Attendance saved successfully!', { id: toastId });
+      
+      const presentCount = Object.values(attendanceRecords).filter(v => v === 'present').length;
+      setSubmissionDetails({
+         batchName: selectedBatch.name,
+         subject: selectedSubject,
+         date: attendanceDate,
+         presentCount,
+         totalCount: visibleStudents.length
+      });
+      setShowSubmissionModal(true);
     } catch (err) {
       toast.error('Failed to save attendance', { id: toastId });
     }
@@ -305,20 +384,20 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
         </div>
         
         <div className="flex gap-2 p-1 bg-white/5 rounded-2xl border border-white/5 overflow-x-auto custom-scrollbar-horizontal w-full">
-          {source === 'mybatch' && (
+          {(source === 'mybatch' || isAdmin) && (
             <button 
               onClick={() => setActiveTab('student')}
               className={`px-4 py-2 whitespace-nowrap rounded-xl text-xs font-bold transition-all ${activeTab === 'student' ? 'bg-[var(--primary)] text-white' : 'text-gray-500 hover:text-white'}`}
             >
-              Take Student Attendance
+              {isAdmin ? 'Edit Student Logs' : 'Take Student Attendance'}
             </button>
           )}
-          {source === 'mybatch' && (
+          {(source === 'mybatch' || isAdmin) && (
             <button 
               onClick={() => setActiveTab('faculty')}
               className={`px-4 py-2 whitespace-nowrap rounded-xl text-xs font-bold transition-all ${activeTab === 'faculty' ? 'bg-[var(--primary)] text-white' : 'text-gray-500 hover:text-white'}`}
             >
-              My Attendance
+              {isAdmin ? 'Edit Faculty Logs' : 'My Attendance'}
             </button>
           )}
           {isAdmin && (
@@ -372,6 +451,29 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
                   onChange={(e) => setAttendanceDate(e.target.value)}
                   className="w-full p-3 bg-white/5 border border-white/10 rounded-xl outline-none text-xs font-bold"
                 />
+                <div className="pt-2 flex justify-between gap-1">
+                  {recentDays.map(d => {
+                    const completed = isDateCompleted(d);
+                    const isToday = d === todayDateStr;
+                    const dateObj = new Date(d);
+                    const dayString = dateObj.toLocaleDateString('en-US', { weekday: 'short' });
+                    const isSelected = d === attendanceDate;
+                    
+                    return (
+                      <button 
+                        key={d} 
+                        onClick={() => setAttendanceDate(d)}
+                        className={`flex flex-col items-center p-1 rounded-lg border flex-1 transition-all ${
+                          isSelected ? 'bg-white/20 border-white text-white' : 'border-transparent hover:bg-white/5 opacity-70'
+                        }`}
+                        title={`${d} ${completed ? '(Logged)' : '(Missing)'}`}
+                      >
+                        <span className="text-[8px] font-bold uppercase">{isToday ? 'TDY' : dayString.toUpperCase()}</span>
+                        <div className={`w-2 h-2 rounded-full mt-1 ${completed ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]'}`}></div>
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
               <div className="glass-card p-4 flex flex-col justify-center items-center relative">
                 <div className="absolute top-2 left-4">
@@ -657,7 +759,37 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
             </AnimatePresence>
 
             {reportTab === 'faculty' && (
-              <div className="glass-card p-6 border-l-4 border-amber-500">
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                   <div className="glass-card p-6 border-l-4 border-emerald-500">
+                      <h4 className="text-xs font-black opacity-50 uppercase tracking-widest mb-4">Today's Present Faculties</h4>
+                      <div className="text-4xl font-black text-emerald-500 mb-2">{todayFaculty.length}</div>
+                      <div className="space-y-2">
+                        {todayFaculty.map(f => (
+                           <div key={`today-${f.id}`} className="text-xs flex justify-between bg-white/5 p-2 rounded">
+                             <span className="font-bold">{f.userName}</span>
+                             <span className="opacity-50">{new Date(f.date?.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                           </div>
+                        ))}
+                        {todayFaculty.length === 0 && <p className="text-xs opacity-40 italic">Nobody signed in yet.</p>}
+                      </div>
+                   </div>
+                   <div className="glass-card p-6 border-l-4 border-blue-500">
+                      <h4 className="text-xs font-black opacity-50 uppercase tracking-widest mb-4">Yesterday's Present Faculties</h4>
+                      <div className="text-4xl font-black text-blue-500 mb-2">{yesterdayFaculty.length}</div>
+                      <div className="space-y-2">
+                        {yesterdayFaculty.map(f => (
+                           <div key={`yest-${f.id}`} className="text-xs flex justify-between bg-white/5 p-2 rounded">
+                             <span className="font-bold">{f.userName}</span>
+                             <span className="opacity-50">{new Date(f.date?.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                           </div>
+                        ))}
+                        {yesterdayFaculty.length === 0 && <p className="text-xs opacity-40 italic">Nobody signed in.</p>}
+                      </div>
+                   </div>
+                </div>
+
+                <div className="glass-card p-6 border-l-4 border-amber-500">
                  <h3 className="text-lg font-bold flex items-center gap-2 text-amber-500 mb-4">
                    <AlertCircle size={20} /> Faculty Attendance Moderation
                  </h3>
@@ -691,18 +823,30 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
                                     const reason = prompt('Enter reason for disapproval:');
                                     if (reason) disapproveAttendance(a.id, reason);
                                   }}
-                                  className="px-3 py-1 bg-red-500/10 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-500/20 transition-all"
+                                  className="px-3 py-1 bg-red-500/10 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-500/20 transition-all mr-2"
                                 >
                                   DISAPPROVE
                                 </button>
                               ) : (
-                                 <button 
-                                  onClick={() => updateDoc(doc(db, 'faculty_attendance', a.id), { isApproved: true, disapprovalReason: null })}
-                                  className="px-3 py-1 bg-green-500/10 text-green-500 rounded-lg text-[10px] font-black hover:bg-green-500/20 transition-all"
+                                <button 
+                                  onClick={() => {
+                                    updateDoc(doc(db, 'faculty_attendance', a.id), { isApproved: true, disapprovalReason: null });
+                                  }}
+                                  className="px-3 py-1 bg-green-500/10 text-green-500 rounded-lg text-[10px] font-black hover:bg-green-500/20 transition-all mr-2"
                                 >
                                   APPROVE
                                 </button>
                               )}
+                              <button 
+                                onClick={() => {
+                                  if(window.confirm('Delete this record entirely?')) {
+                                     firestoreService.deleteItem('faculty_attendance', a.id);
+                                  }
+                                }}
+                                className="px-3 py-1 bg-red-500/10 text-red-500 rounded-lg text-[10px] font-black hover:bg-red-500/20 transition-all"
+                              >
+                                DELETE
+                              </button>
                             </td>
                           </tr>
                         ))}
@@ -712,6 +856,7 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
                      </tbody>
                    </table>
                  </div>
+               </div>
               </div>
             )}
 
@@ -810,6 +955,61 @@ export default function AttendanceModule({ user, isAdmin, isFaculty, facultyBatc
                  </div>
               </div>
             )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showSubmissionModal && submissionDetails && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-gray-900 border border-white/10 p-8 rounded-3xl shadow-2xl max-w-sm w-full relative overflow-hidden"
+            >
+              <div className="absolute top-0 left-0 w-full h-2 bg-green-500"></div>
+              <div className="flex flex-col items-center text-center space-y-4">
+                <div className="w-16 h-16 bg-green-500/10 rounded-full flex items-center justify-center">
+                  <CheckCircle2 size={32} className="text-green-500" />
+                </div>
+                <div>
+                  <h3 className="text-2xl font-black mb-1">Attendance Logged</h3>
+                  <p className="text-sm opacity-60">Successfully saved to the cloud.</p>
+                </div>
+                
+                <div className="w-full bg-white/5 rounded-xl p-4 space-y-2 text-left">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="opacity-50 font-bold uppercase text-[10px]">Date</span>
+                    <span className="font-bold">{submissionDetails.date}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="opacity-50 font-bold uppercase text-[10px]">Class</span>
+                    <span className="font-bold">{submissionDetails.batchName}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="opacity-50 font-bold uppercase text-[10px]">Subject</span>
+                    <span className="font-bold text-indigo-400">{submissionDetails.subject}</span>
+                  </div>
+                  <div className="pt-2 mt-2 border-t border-white/10 flex justify-between items-center">
+                    <span className="opacity-50 font-bold uppercase text-[10px]">Students Present</span>
+                    <span className="font-black text-green-500 text-lg">{submissionDetails.presentCount} <span className="text-sm opacity-50 font-medium">/ {submissionDetails.totalCount}</span></span>
+                  </div>
+                </div>
+
+                <button 
+                  onClick={() => setShowSubmissionModal(false)}
+                  className="w-full py-3 bg-[var(--primary)] hover:bg-[var(--primary)]/90 text-white rounded-xl font-bold transition-all mt-4"
+                >
+                  Done
+                </button>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>

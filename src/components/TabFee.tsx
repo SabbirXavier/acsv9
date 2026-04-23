@@ -86,6 +86,8 @@ function TabFee({ branding }: TabFeeProps) {
     amount: ''
   });
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   const handlePaymentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,6 +100,7 @@ function TabFee({ branding }: TabFeeProps) {
     try {
       const history = enrollment.paymentHistory || [];
       const newPayment = {
+        id: Date.now().toString(),
         date: new Date().toISOString(),
         amount: paymentData.amount || netPayable.toString(),
         status: 'pending',
@@ -671,7 +674,7 @@ function TabFee({ branding }: TabFeeProps) {
             </thead>
             <tbody>
               {enrollment.paymentHistory && enrollment.paymentHistory.length > 0 ? (
-                enrollment.paymentHistory.sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((payment: any, idx: number) => (
+                [...enrollment.paymentHistory].sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()).map((payment: any, idx: number) => (
                   <tr key={idx} className="border-b border-[var(--border-color)] hover:bg-white/5 transition-colors">
                     <td className="p-4">
                       <div className="text-sm font-medium">{new Date(payment.date).toLocaleDateString()}</div>
@@ -686,7 +689,7 @@ function TabFee({ branding }: TabFeeProps) {
                         payment.status === 'rejected' ? 'bg-red-500/20 text-red-500' : 
                         'bg-yellow-500/20 text-yellow-500'
                       }`}>
-                        {payment.status || 'Pending'}
+                        {payment.status === 'pending' ? 'Review Requested' : payment.status || 'Review Requested'}
                       </span>
                     </td>
                     <td className="p-4 text-right">
@@ -698,7 +701,7 @@ function TabFee({ branding }: TabFeeProps) {
                           View Receipt
                         </button>
                       ) : (
-                        <span className="text-xs opacity-40 italic">Sent via WA</span>
+                        <span className="text-xs opacity-40 italic">Link Mode</span>
                       )}
                     </td>
                   </tr>
@@ -748,7 +751,7 @@ function TabFee({ branding }: TabFeeProps) {
                  <input 
                    required
                    value={paymentData.transactionId}
-                   onChange={e => setPaymentData({...paymentData, transactionId: e.target.value})}
+                   onChange={e => setPaymentData(prev => ({...prev, transactionId: e.target.value}))}
                    className="w-full p-4 bg-gray-100 dark:bg-white/5 border border-white/10 rounded-2xl font-bold outline-none focus:border-[var(--primary)]"
                    placeholder="12 Digit No."
                  />
@@ -762,26 +765,53 @@ function TabFee({ branding }: TabFeeProps) {
                       accept="image/*"
                       id="wa-screenshot"
                       className="hidden"
+                      disabled={isUploading}
                       onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (!file) return;
+                        setIsUploading(true);
+                        setUploadProgress(0);
                         const toastId = toast.loading('Uploading screenshot...');
                         try {
-                          const { promise } = storageService.uploadFile(file, () => {});
+                          const { promise } = storageService.uploadFile(file, (prog) => {
+                             setUploadProgress(prog);
+                          });
                           const meta = await promise;
-                          setPaymentData({ ...paymentData, screenshotUrl: meta.url });
+                          setPaymentData(prev => ({ ...prev, screenshotUrl: meta.url }));
                           toast.success('Screenshot uploaded', { id: toastId });
                         } catch (err) {
                           toast.error('Upload failed', { id: toastId });
+                        } finally {
+                          setIsUploading(false);
+                          setUploadProgress(0);
                         }
                       }}
                     />
                     <label 
                       htmlFor="wa-screenshot"
-                      className="flex items-center justify-center gap-3 w-full p-6 bg-gray-100 dark:bg-white/5 border-2 border-dashed border-white/10 rounded-2xl cursor-pointer hover:bg-white/10 transition-all font-bold text-sm"
+                      className={`flex flex-col items-center justify-center gap-2 w-full p-6 bg-gray-100 dark:bg-white/5 border-2 border-dashed border-white/10 rounded-2xl cursor-pointer hover:bg-white/10 transition-all font-bold text-sm overflow-hidden relative ${isUploading ? 'opacity-80 cursor-not-allowed' : ''}`}
                     >
-                      {paymentData.screenshotUrl ? <CheckCircle2 className="text-green-500" /> : <ImageIcon className="opacity-40" />}
-                      {paymentData.screenshotUrl ? 'Image Attached' : 'Upload Screenshot'}
+                      {isUploading && (
+                        <div 
+                           className="absolute left-0 bottom-0 h-1 bg-[var(--primary)] transition-all ease-out duration-300"
+                           style={{ width: `${uploadProgress}%` }}
+                        />
+                      )}
+                      <div className="flex items-center gap-3">
+                         {isUploading ? (
+                           <Upload className="animate-bounce" size={20} />
+                         ) : paymentData.screenshotUrl ? (
+                           <CheckCircle2 className="text-green-500" size={24} />
+                         ) : (
+                           <ImageIcon className="opacity-40" size={24} />
+                         )}
+                         <span className="text-sm">
+                           {isUploading ? `Uploading... ${Math.round(uploadProgress)}%` : paymentData.screenshotUrl ? 'Image Attached Successfully' : 'Upload Screenshot / Receipt'}
+                         </span>
+                      </div>
+                      {!isUploading && !paymentData.screenshotUrl && (
+                        <span className="text-[10px] opacity-40 uppercase tracking-widest font-black">Click here to browse</span>
+                      )}
                     </label>
                  </div>
                </div>
@@ -790,7 +820,7 @@ function TabFee({ branding }: TabFeeProps) {
                  <label className="text-[10px] font-black uppercase opacity-40 ml-1">Additional Notes</label>
                  <textarea 
                    value={paymentData.notes}
-                   onChange={e => setPaymentData({...paymentData, notes: e.target.value})}
+                   onChange={e => setPaymentData(prev => ({...prev, notes: e.target.value}))}
                    className="w-full p-4 bg-gray-100 dark:bg-white/5 border border-white/10 rounded-2xl text-sm min-h-[80px]"
                    placeholder="Optional details..."
                  />
@@ -798,7 +828,7 @@ function TabFee({ branding }: TabFeeProps) {
 
                <button 
                 type="submit"
-                disabled={isSubmittingPayment}
+                disabled={isSubmittingPayment || isUploading}
                 className="w-full py-4 bg-[var(--primary)] text-white rounded-2xl font-black uppercase tracking-widest shadow-xl shadow-[var(--primary)]/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
                >
                  {isSubmittingPayment ? 'Submitting...' : 'Confirm Submission'}

@@ -128,10 +128,23 @@ const TabMyBatch: React.FC<TabMyBatchProps> = ({ userEnrollment, user, facultyBa
 
   useEffect(() => {
     const loadSubjects = async () => {
+      const classXSubjects = ['General Mathematics', 'General Science', 'Social Science', 'English'];
+
       // 1. Check if user is enrolled and has specific subjects
       if (userEnrollment?.subjects && activeGrade === userEnrollment.grade) {
-        setSubjects(userEnrollment.subjects);
-        setActiveSubject(userEnrollment.subjects[0] || '');
+        let subs = userEnrollment.subjects;
+        if (activeGrade === 'X') {
+          subs = subs.filter((s: string) => classXSubjects.includes(s));
+        }
+        setSubjects(subs.length > 0 ? subs : (activeGrade === 'X' ? classXSubjects : []));
+        setActiveSubject(subs[0] || (activeGrade === 'X' ? classXSubjects[0] : ''));
+        return;
+      }
+
+      // Force constraints for Class X for admin/faculty exploring
+      if (activeGrade === 'X') {
+        setSubjects(classXSubjects);
+        setActiveSubject(classXSubjects[0]);
         return;
       }
 
@@ -457,7 +470,7 @@ const TabMyBatch: React.FC<TabMyBatchProps> = ({ userEnrollment, user, facultyBa
                     <ChevronRight size={18} className={activeFolder?.id === folder.id ? 'opacity-100' : 'opacity-20'} />
                   </button>
                   {canManageCurrentBatch && (
-                    <div className="absolute right-10 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                    <div className="absolute right-10 top-1/2 -translate-y-1/2 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all">
                        <button 
                          onClick={(e) => {
                            e.stopPropagation();

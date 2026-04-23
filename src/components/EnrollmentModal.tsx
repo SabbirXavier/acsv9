@@ -485,6 +485,25 @@ export default function EnrollmentModal() {
             </div>
           </div>
 
+          {formData.subjects.length > 0 && (() => {
+            const selectedFees = fees.filter(f => formData.subjects.includes(f.subject));
+            const totalBaseAmount = selectedFees.reduce((sum, f) => sum + (Number(f.originalPrice) || 0), 0);
+            const discountedAmount = selectedFees.reduce((sum, f) => sum + (Number(f.finalPrice) || 0), 0);
+
+            return (
+              <div className="flex items-center justify-between items-end pt-2 pb-1 border-t border-gray-200 dark:border-white/10 mt-2">
+                <div>
+                  <span className="text-xs uppercase font-bold text-gray-500 line-through mr-2">₹{totalBaseAmount}</span>
+                  <p className="text-[10px] text-gray-400 opacity-80 pt-1">Total Fee</p>
+                </div>
+                <div className="text-right">
+                  <span className="text-2xl font-black text-green-500">₹{discountedAmount}</span>
+                  <p className="text-[10px] text-green-500/80 font-bold uppercase tracking-wider">Final Amount</p>
+                </div>
+              </div>
+            );
+          })()}
+
           <button type="submit" className="w-full py-3 mt-2 bg-[var(--primary)] text-white rounded-xl font-bold shadow-lg hover:opacity-90">
             Enroll Now
           </button>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Radio, CalendarCheck, Calendar, Clock } from 'lucide-react';
+import { Radio, CalendarCheck, Calendar, Clock, Instagram } from 'lucide-react';
 import { firestoreService } from '../services/firestoreService';
 import MarkdownRenderer from './MarkdownRenderer';
 
@@ -153,6 +153,14 @@ export default function TabRoutine() {
                   </div>
                 </div>
                 
+                {radar.instagramProfile && (
+                  <div className="w-full">
+                     <a href={radar.instagramProfile.startsWith('http') ? radar.instagramProfile : `https://instagram.com/${radar.instagramProfile.replace('@', '')}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-purple-500/10 to-pink-500/10 hover:from-purple-500/20 hover:to-pink-500/20 border border-pink-500/20 rounded-lg text-xs font-bold text-pink-500 transition-all">
+                       <Instagram size={14} /> Teacher's Instagram
+                     </a>
+                  </div>
+                )}
+
                 {radar.link && (radar.status === 'live' || radar.status === 'upcoming') && (
                   <a 
                     href={radar.link} 

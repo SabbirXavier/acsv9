@@ -76,61 +76,55 @@ export const storageService = {
     file: File, 
     onProgress: (progress: number) => void
   ): { task: any, promise: Promise<MediaMetadata> } {
-    let cancelUpload = () => {};
-    const promise = new Promise<MediaMetadata>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      
-      cancelUpload = () => {
-        xhr.abort();
-      };
+    const fileExtension = file.name.split('.').pop();
+    const fileName = `${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExtension}`;
+    const storageReference = storageRef(activeStorageApps['primary'] || (import('../firebase').then(m => m.storage)), `uploads/${fileName}`);
+    
+    let isCancelled = false;
+    let uploadTask: any = null;
 
-      xhr.upload.addEventListener('progress', (event) => {
-        if (event.lengthComputable) {
-          const progress = (event.loaded / event.total) * 100;
-          onProgress(progress);
-        }
-      });
+    const promise = new Promise<MediaMetadata>(async (resolve, reject) => {
+      try {
+        const { storage } = await import('../firebase');
+        const finalRef = storageRef(storage, `uploads/${fileName}`);
+        uploadTask = uploadBytesResumable(finalRef, file);
 
-      xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          try {
-            const result = JSON.parse(xhr.responseText);
-            if (result.success) {
-              resolve({
-                url: result.url,
-                projectId: 'mongodb-gridfs',
-                bucket: 'uploads',
-                fileType: file.type,
-                fileSize: file.size,
-                uploadTimestamp: Date.now()
-              });
-            } else {
-              reject(new Error(result.message || 'Upload failed. File database might not be configured.'));
-            }
-          } catch (e) {
-            reject(new Error('Invalid server response'));
+        uploadTask.on('state_changed', 
+          (snapshot: any) => {
+            if (isCancelled) return;
+            const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+            onProgress(progress);
+          },
+          (error: any) => {
+            if (!isCancelled) reject(error);
+          },
+          async () => {
+             if (isCancelled) return;
+             try {
+                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                resolve({
+                  url: downloadURL,
+                  projectId: 'primary',
+                  bucket: 'uploads',
+                  fileType: file.type,
+                  fileSize: file.size,
+                  uploadTimestamp: Date.now()
+                });
+             } catch (err) {
+                reject(err);
+             }
           }
-        } else {
-          reject(new Error(`Server responded with status ${xhr.status}. Is the File DB configured?`));
-        }
-      });
-
-      xhr.addEventListener('error', () => {
-        reject(new Error('Network error occurred during upload. Check server logs.'));
-      });
-      
-      xhr.addEventListener('abort', () => {
-        reject(new Error('Upload cancelled'));
-      });
-
-      xhr.open('POST', '/api/upload-file', true);
-      const formData = new FormData();
-      formData.append('file', file);
-      xhr.send(formData);
+        );
+      } catch (err) {
+        reject(err);
+      }
     });
 
     return {
-      task: { cancel: cancelUpload },
+      task: { cancel: () => {
+         isCancelled = true;
+         if (uploadTask) uploadTask.cancel();
+      } },
       promise
     };
   },
